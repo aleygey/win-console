@@ -1,0 +1,393 @@
+/* Management panel interior — a polished settings UI matching the chat panel's
+   refined chrome (var(--radius-lg) cards, 1px borders, var(--shadow-xs), hover
+   states). All classes are .mg-* to avoid clashing with app.css. Tokens only. */
+
+.mg-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+/* save flash toast — quiet, success-tinted pill */
+.mg-flash {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  align-self: flex-start;
+  padding: 6px 12px;
+  border-radius: var(--radius-xl);
+  background: var(--surface-success-weak);
+  color: var(--text-on-success-base);
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-medium);
+}
+.mg-flash svg {
+  flex: none;
+}
+
+/* ── health badge (panel-head) ─────────────────────────────────────────────── */
+.mg-health {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px;
+  border-radius: var(--radius-xl);
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+  border: 1px solid var(--border-weak-base);
+  background: var(--surface-raised-base);
+  color: var(--text-weak);
+}
+.mg-health .mg-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--text-weaker);
+}
+.mg-health[data-state="online"] {
+  background: var(--surface-success-weak);
+  border-color: transparent;
+  color: var(--text-on-success-base);
+}
+.mg-health[data-state="online"] .mg-dot {
+  background: var(--text-on-success-base);
+  box-shadow: 0 0 0 3px var(--surface-success-weak);
+}
+.mg-health[data-state="offline"] {
+  background: var(--surface-critical-weak);
+  border-color: transparent;
+  color: var(--text-on-critical-base);
+}
+.mg-health[data-state="offline"] .mg-dot {
+  background: var(--text-on-critical-base);
+}
+
+/* ── card ──────────────────────────────────────────────────────────────────── */
+.mg-card {
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised-base);
+  box-shadow: var(--shadow-xs);
+  overflow: hidden;
+}
+.mg-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-weaker-base);
+}
+.mg-card-icon {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-interactive-base);
+  background: var(--surface-interactive-base);
+}
+.mg-card-title {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.mg-card-title h3 {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-strong);
+  letter-spacing: -0.01em;
+}
+.mg-card-body {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ── form fields ───────────────────────────────────────────────────────────── */
+.mg-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mg-field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-strong);
+}
+.mg-field input,
+.mg-field select,
+.mg-textarea {
+  width: 100%;
+  background: var(--surface-inset-base);
+  color: var(--text-strong);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  padding: 9px 12px;
+  font: inherit;
+  outline: none;
+  transition: border-color 120ms ease;
+}
+.mg-textarea {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-small);
+  resize: vertical;
+  min-height: 52px;
+  line-height: 1.5;
+}
+.mg-field input:hover,
+.mg-field select:hover,
+.mg-textarea:hover {
+  border-color: var(--border-hover);
+}
+.mg-field input:focus,
+.mg-field select:focus,
+.mg-textarea:focus {
+  border-color: var(--border-selected);
+}
+.mg-field input::placeholder {
+  color: var(--text-weaker);
+}
+.mg-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.mg-row .mg-field {
+  flex: 1;
+  min-width: 0;
+}
+.mg-row .mg-field.mg-narrow {
+  flex: none;
+  width: 130px;
+}
+
+/* ── capability rows ───────────────────────────────────────────────────────── */
+.mg-caps {
+  display: flex;
+  flex-direction: column;
+}
+.mg-cap {
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border-weaker-base);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: background 120ms ease;
+}
+.mg-cap:last-child {
+  border-bottom: 0;
+}
+.mg-cap:hover {
+  background: var(--surface-raised-base-hover);
+}
+.mg-cap[data-enabled="false"] {
+  opacity: 0.72;
+}
+
+.mg-cap-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.mg-cap-glyph {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text-strong);
+  background: var(--surface-inset-base);
+  border: 1px solid var(--border-weaker-base);
+}
+.mg-cap-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+.mg-cap-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-strong);
+}
+
+/* ── help hint ("?") + hover tooltip ──────────────────────────────────────────
+   A tiny circular badge that holds the descriptive blurb out of sight until the
+   user hovers/focuses it. Pure-CSS tooltip — no JS, no native title flicker. */
+.mg-hint {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid var(--border-base);
+  background: var(--surface-raised-base);
+  color: var(--text-weak);
+  font-size: 10px;
+  font-weight: var(--font-weight-medium);
+  line-height: 1;
+  cursor: help;
+  user-select: none;
+  outline: none;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease;
+}
+.mg-hint:hover,
+.mg-hint:focus-visible {
+  color: var(--cobalt-9);
+  border-color: var(--cobalt-9);
+}
+.mg-hint-pop {
+  /* fixed + JS coords → escapes any ancestor overflow:hidden (the card) */
+  position: fixed;
+  transform: translateX(-50%);
+  z-index: 1000;
+  width: max-content;
+  max-width: 260px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-base);
+  background: var(--background-strong);
+  color: var(--text-base);
+  box-shadow: var(--shadow-md);
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--line-height-normal);
+  white-space: normal;
+  text-align: left;
+  pointer-events: none;
+}
+
+/* badges */
+.mg-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+  padding: 2px 8px;
+  border-radius: var(--radius-xl);
+  background: var(--surface-interactive-base);
+  color: var(--text-interactive-base);
+}
+.mg-badge svg {
+  flex: none;
+}
+
+/* tool chips */
+.mg-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.mg-tools-label {
+  font-size: var(--font-size-small);
+  color: var(--text-weak);
+}
+.mg-tool {
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset-base);
+  border: 1px solid var(--border-weaker-base);
+  color: var(--text-base);
+}
+
+/* ── toggle switch ─────────────────────────────────────────────────────────── */
+.mg-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  flex: none;
+  cursor: pointer;
+  user-select: none;
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-weak);
+}
+.mg-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.mg-switch-track {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--surface-weak);
+  border: 1px solid var(--border-base);
+  transition:
+    background 140ms ease,
+    border-color 140ms ease;
+}
+.mg-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface-raised-strong);
+  box-shadow: var(--shadow-xs);
+  transition: transform 140ms ease;
+}
+.mg-switch input:checked + .mg-switch-track {
+  background: var(--text-interactive-base);
+  border-color: var(--text-interactive-base);
+}
+.mg-switch input:checked + .mg-switch-track .mg-switch-thumb {
+  transform: translateX(16px);
+  background: var(--text-on-interactive-base);
+}
+.mg-switch input:focus-visible + .mg-switch-track {
+  outline: 2px solid var(--border-selected);
+  outline-offset: 2px;
+}
+.mg-switch-text[data-on="true"] {
+  color: var(--text-interactive-base);
+}
+
+/* per-capability config form, indented into an inset block */
+.mg-cap-config {
+  margin-top: 2px;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  background: var(--surface-inset-base);
+  border: 1px solid var(--border-weaker-base);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}

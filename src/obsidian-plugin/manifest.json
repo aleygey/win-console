@@ -1,0 +1,9 @@
+{
+  "id": "winhost-console",
+  "name": "opencode Win Host",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "把 opencode 控制台(对话 / 邮件 / 通知 / 经验库)嵌进 Obsidian 作为统一入口。连接常驻的 win-host daemon(HTTP/SSE);全局热键唤起由 daemon 转交本插件打开对话。",
+  "author": "you",
+  "isDesktopOnly": true
+}

@@ -1,0 +1,30 @@
+/* Frameless launcher chrome for the spotlight popup. */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+.spotlight {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border, #2b2d31);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg, #1a1b1e);
+  /* The frameless window is draggable from the panel header. */
+  -webkit-app-region: drag;
+}
+.spotlight .panel-head {
+  -webkit-app-region: drag;
+}
+.spotlight input,
+.spotlight textarea,
+.spotlight button,
+.spotlight .panel-body {
+  -webkit-app-region: no-drag;
+}
+.spotlight .panel {
+  height: 100%;
+}

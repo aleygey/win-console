@@ -1,0 +1,371 @@
+/**
+ * Styles for the exp panel Graph view (refine-graph.tsx).
+ *
+ * Chrome (surface / text / border) routes through the shared semantic tokens
+ * (styles/tokens.css) so the graph themes with the rest of the console. Only
+ * the edge-kind hues live in the TSX as categorical constants; node-dot hues
+ * are mapped here onto the token accent ramps so they theme too.
+ */
+
+.rg-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* ── Loading / error / empty states ────────────────────────────────────── */
+
+.rg-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--spacing) * 3);
+  height: 100%;
+  min-height: 240px;
+  color: var(--text-weak);
+  font-size: var(--font-size-base);
+}
+
+.rg-state-error {
+  color: var(--text-on-critical-base);
+}
+
+.rg-retry {
+  padding: calc(var(--spacing) * 1) calc(var(--spacing) * 3);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised-base);
+  color: var(--text-strong);
+  font-family: inherit;
+  font-size: var(--font-size-small);
+  cursor: pointer;
+}
+
+.rg-retry:hover {
+  background: var(--surface-raised-base-hover);
+  border-color: var(--border-hover);
+}
+
+/* ── Canvas ────────────────────────────────────────────────────────────── */
+
+.rg-canvas-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-lg);
+  background-color: var(--surface-inset-base);
+  /* Faint dotted grid, matching the reference knowledge graph backdrop. */
+  background-image: radial-gradient(
+    var(--border-weaker-base) 1px,
+    transparent 1px
+  );
+  background-size: 22px 22px;
+  overflow: hidden;
+}
+
+.rg-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ── Edges ─────────────────────────────────────────────────────────────── */
+
+.rg-edge {
+  /* Edges stay quiet by default — they read as faint connective tissue, the
+     desaturated nodes carry the colour. Focus (edgeActive) bumps stroke-width
+     in the TSX, and we lift opacity to full there via .rg-node interactions. */
+  opacity: 0.55;
+  transition:
+    opacity 0.15s ease,
+    stroke-width 0.15s ease;
+}
+
+.rg-edge.is-active {
+  opacity: 1;
+}
+
+.rg-edge.is-dim {
+  opacity: 0.1;
+}
+
+/* ── Nodes ─────────────────────────────────────────────────────────────── */
+
+.rg-node {
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.rg-node.is-dim {
+  opacity: 0.22;
+}
+
+.rg-node-dot {
+  /* Default / unknown-kind dot — desaturated neutral, matching the --kind-*
+     family. A hairline ring in the canvas colour separates overlapping dots. */
+  fill: var(--kind-neutral);
+  stroke: var(--surface-inset-base);
+  stroke-width: 1.5;
+  transition:
+    r 0.12s ease,
+    fill 0.12s ease,
+    stroke 0.12s ease;
+}
+
+.rg-node:hover .rg-node-dot {
+  /* Lift the ring rather than recolour the (kind-keyed) fill on hover. */
+  stroke: var(--border-hover);
+}
+
+.rg-node.is-on .rg-node-dot {
+  stroke: var(--border-selected);
+  stroke-width: 2.5;
+}
+
+.rg-node-label {
+  fill: var(--text-base);
+  font-family: var(--font-family-sans);
+  font-size: 11px;
+  font-weight: var(--font-weight-regular);
+  pointer-events: none;
+  user-select: none;
+  /* Label LOD: hidden by default to avoid the dense-overlap mess; shown for hubs
+     (.is-shown) and on hover / focus. */
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.rg-node-label.is-shown {
+  opacity: 0.8;
+}
+
+.rg-node:hover .rg-node-label,
+.rg-node.is-on .rg-node-label {
+  opacity: 1;
+  fill: var(--text-strong);
+  font-weight: var(--font-weight-medium);
+}
+
+/* Node-dot hues keyed by experience kind. Routed through the shared
+   desaturated --kind-* token family (tokens.css) so nodes stay low-chroma and
+   theme with the rest of the console; unknown / custom kinds fall back to the
+   neutral colour set on .rg-node-dot above. */
+.rg-node-dot[data-kind="rule_must"],
+.rg-node-dot[data-kind="constraint_or_policy"],
+.rg-node-dot[data-kind="workflow_rule"] {
+  fill: var(--kind-rule_must);
+}
+
+.rg-node-dot[data-kind="rule_must_not"],
+.rg-node-dot[data-kind="pitfall_or_caveat"],
+.rg-node-dot[data-kind="workflow_gap"] {
+  fill: var(--kind-rule_must_not);
+}
+
+.rg-node-dot[data-kind="pattern"],
+.rg-node-dot[data-kind="workflow_pattern"] {
+  fill: var(--kind-pattern);
+}
+
+.rg-node-dot[data-kind="recipe"],
+.rg-node-dot[data-kind="know_how"] {
+  fill: var(--kind-recipe);
+}
+
+.rg-node-dot[data-kind="fact"],
+.rg-node-dot[data-kind="domain_knowledge"] {
+  fill: var(--kind-fact);
+}
+
+.rg-node-dot[data-kind="preference"],
+.rg-node-dot[data-kind="preference_style"] {
+  fill: var(--kind-preference);
+}
+
+/* ── Legend (also a per-kind visibility toggle) — hairline glass panel ──── */
+
+.rg-legend {
+  position: absolute;
+  right: calc(var(--spacing) * 3);
+  bottom: calc(var(--spacing) * 3);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 0.5);
+  padding: calc(var(--spacing) * 2);
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  /* Hairline glass: white-ish, subtly translucent over the canvas + blur. */
+  background: color-mix(in srgb, var(--background-strong) 88%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: var(--shadow-sm);
+}
+
+.rg-legend-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 0.5) calc(var(--spacing) * 1);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-base);
+  font-family: inherit;
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-normal);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    opacity 0.12s ease;
+}
+
+.rg-legend-row:hover {
+  background: var(--button-ghost-hover);
+  color: var(--text-strong);
+}
+
+.rg-legend-row[data-off="true"] {
+  opacity: 0.4;
+}
+
+.rg-legend-swatch {
+  width: 18px;
+  height: 0;
+  border-top-width: 2px;
+  flex: 0 0 auto;
+}
+
+.rg-legend-label {
+  flex: 1 1 auto;
+  text-align: left;
+}
+
+.rg-legend-dir {
+  font-size: 11px;
+  color: var(--text-weaker);
+}
+
+/* ── Stats / focus chip ────────────────────────────────────────────────── */
+
+.rg-stats {
+  position: absolute;
+  left: calc(var(--spacing) * 3);
+  top: calc(var(--spacing) * 3);
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 1) calc(var(--spacing) * 2.5);
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  /* Hairline glass — same chrome as the toolbar / legend. */
+  background: color-mix(in srgb, var(--background-strong) 88%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: var(--shadow-sm);
+  font-size: var(--font-size-small);
+  color: var(--text-weak);
+}
+
+.rg-stat b {
+  color: var(--text-strong);
+  font-weight: var(--font-weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+.rg-stat-sep {
+  width: 1px;
+  height: 12px;
+  background: var(--border-weak-base);
+}
+
+.rg-focus-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  max-width: 220px;
+  padding: calc(var(--spacing) * 0.5) calc(var(--spacing) * 2);
+  border: 1px solid var(--border-selected);
+  border-radius: 999px;
+  background: var(--surface-interactive-base);
+  color: var(--text-interactive-base);
+  font-family: inherit;
+  font-size: var(--font-size-small);
+  cursor: pointer;
+}
+
+.rg-focus-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rg-focus-x {
+  font-size: var(--font-size-base);
+  line-height: 1;
+}
+
+/* ── interactive graph: pan/zoom/drag + toolbar (added) ───────────────── */
+.rg-svg { cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.rg-svg:active { cursor: grabbing; }
+.rg-node { cursor: pointer; }
+.rg-node.dragging { cursor: grabbing; }
+
+/* Toolbar — a single hairline "glass" panel holding the depth selector + zoom
+   + reset, split by a hairline separator (consistent with legend / stats). */
+.rg-toolbar {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px;
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--background-strong) 88%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: var(--shadow-sm);
+}
+/* Inner groups are now transparent — the toolbar itself is the surface. */
+.rg-depth, .rg-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.rg-toolbar-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--border-weak-base);
+  flex: 0 0 auto;
+}
+.rg-depth-label {
+  font-size: var(--font-size-small);
+  color: var(--text-weak);
+  padding: 0 6px 0 4px;
+  white-space: nowrap;
+}
+.rg-depth-btn, .rg-zoom-btn {
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-base);
+  font: inherit;
+  font-size: var(--font-size-small);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.rg-depth-btn:hover, .rg-zoom-btn:hover { background: var(--button-ghost-hover); color: var(--text-strong); }
+.rg-depth-btn[data-active="true"] { background: var(--surface-interactive-base); color: var(--text-interactive-base); font-weight: var(--font-weight-medium); }

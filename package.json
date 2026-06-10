@@ -1,0 +1,67 @@
+{
+  "name": "super-work-host",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Headless win-host daemon (tray + global hotkey + MCP/HTTP/SSE) with interchangeable front-ends: Obsidian plugin (daily entry), Electron console (management), spotlight popup. Capabilities register once and surface to the agent, the UIs, and the console.",
+  "type": "module",
+  "main": "out/host/index.js",
+  "scripts": {
+    "smoke": "tsx src/host/smoke.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.host.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.obsidian.json",
+    "build:host": "node scripts/build-host.mjs",
+    "build:renderers": "node scripts/build-renderers.mjs",
+    "build:obsidian": "node scripts/build-obsidian.mjs",
+    "build": "npm run build:host && npm run build:renderers",
+    "build:all": "npm run build:host && npm run build:renderers && npm run build:obsidian",
+    "start": "npm run build && electron .",
+    "dist:win": "npm run build:all && electron-builder --win"
+  },
+  "build": {
+    "appId": "com.opencode.winhost",
+    "productName": "opencode Win Host",
+    "directories": {
+      "output": "dist"
+    },
+    "extraMetadata": {
+      "main": "out/host/index.js",
+      "type": "commonjs"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "npmRebuild": false,
+    "win": {
+      "target": [
+        "portable",
+        "nsis"
+      ],
+      "artifactName": "opencode-win-host-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "opencode-win-host-portable.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "1.3.13",
+    "marked": "^18.0.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "electron": "^30.0.0",
+    "electron-builder": "^26.15.0",
+    "esbuild": "^0.24.0",
+    "obsidian": "^1.7.2",
+    "solid-js": "^1.9.3",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "vite-plugin-solid": "^2.11.0"
+  }
+}

@@ -1,0 +1,1157 @@
+/**
+ * Styles for the exp panel List view (RefineList).
+ *
+ * A responsive card grid of experiences (title / kind tag / abstract / scope /
+ * obs count / last-refined) plus a click-through detail modal showing the full
+ * abstract, statement, observations, and refinement history.
+ *
+ * Palette: every color references a semantic token from styles/tokens.css so the
+ * view themes automatically. Kind accent colors are the one exception — they are
+ * brand hues keyed off the `data-kind` attribute, mirroring the opencode refiner
+ * page's per-kind swatches, and are theme-neutral by design.
+ */
+
+.rl-root {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  gap: calc(var(--spacing) * 3);
+}
+
+/* ── Toolbar (count + refresh) ──────────────────────────────────────────── */
+
+.rl-toolbar {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  flex: none;
+}
+
+.rl-count {
+  font-size: var(--font-size-small);
+  color: var(--text-weak);
+}
+
+.rl-count b {
+  color: var(--text-strong);
+  font-weight: var(--font-weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+.rl-spacer {
+  flex: 1 1 auto;
+}
+
+.rl-count-sub {
+  color: var(--text-weaker);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Category filter → two-level tabs ───────────────────────────────────── */
+/* A level-1 underline tab row (全部 + top tags) and, when a top is selected,
+   an indented level-2 chip row of its sub tags. */
+
+.rl-cats {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 2.5);
+  flex: none;
+  margin-bottom: calc(var(--spacing) * 3);
+}
+
+.rl-tabrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--spacing) * 1);
+}
+
+/* 一级 — quiet text tab with a cobalt underline when active */
+.rl-tab1 {
+  position: relative;
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3.25);
+  border: 0;
+  background: transparent;
+  color: var(--text-weak);
+  white-space: nowrap;
+  font-family: inherit;
+  font-size: var(--font-size-small);
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.rl-tab1:hover {
+  color: var(--text-strong);
+  background: var(--button-ghost-hover);
+}
+
+.rl-tab1[data-on="true"] {
+  color: var(--text-strong);
+  font-weight: var(--font-weight-medium);
+  background: var(--surface-sunken);
+}
+
+.rl-tab1[data-on="true"]::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--spacing) * 3.25);
+  right: calc(var(--spacing) * 3.25);
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--cobalt-9);
+}
+
+.rl-tabrow-rule {
+  width: 100%;
+  height: 1px;
+  background: var(--border-weaker-base);
+  margin-top: calc(var(--spacing) * -1.75);
+}
+
+/* 二级 — small hairline chips, visually subordinate, indented */
+.rl-subrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  padding-left: 2px;
+}
+
+.rl-subrow-lead {
+  font-size: 11px;
+  color: var(--text-weaker);
+  margin-right: 2px;
+}
+
+.rl-tab2 {
+  padding: calc(var(--spacing) * 0.75) calc(var(--spacing) * 2.5);
+  border: 1px solid var(--border-weak-base);
+  border-radius: 999px;
+  background: var(--surface-base);
+  white-space: nowrap;
+  color: var(--text-base);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.rl-tab2:hover {
+  border-color: var(--border-hover);
+  color: var(--text-strong);
+}
+
+.rl-tab2[data-on="true"] {
+  border-color: var(--cobalt-6);
+  background: var(--cobalt-3);
+  color: var(--cobalt-11);
+}
+
+/* ── Detail edit: category tag editor ───────────────────────────────────── */
+
+.rl-cat-edit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  margin-bottom: calc(var(--spacing) * 2);
+}
+
+.rl-cat-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1);
+  padding: calc(var(--spacing) * 0.5) calc(var(--spacing) * 1) calc(var(--spacing) * 0.5)
+    calc(var(--spacing) * 2);
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-sm);
+  background: var(--surface-weak);
+  color: var(--text-base);
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+}
+
+.rl-cat-tag-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-weak);
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.rl-cat-tag-x:hover {
+  background: var(--surface-critical-weak);
+  color: var(--text-on-critical-base);
+}
+
+/* Inline empty state — used when a category filter matches nothing. */
+.rl-state-inline {
+  min-height: 160px;
+  gap: calc(var(--spacing) * 2);
+}
+
+.rl-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2.5);
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  background: var(--button-secondary-base);
+  color: var(--text-base);
+  font-family: inherit;
+  font-size: var(--font-size-small);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.rl-refresh:hover {
+  background: var(--button-secondary-hover);
+  color: var(--text-strong);
+  border-color: var(--border-hover);
+}
+
+.rl-refresh:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+/* ── Card grid ──────────────────────────────────────────────────────────── */
+
+.rl-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: calc(var(--spacing) * 3.5);
+  align-content: start;
+  /* Size each card to its own content. Default align-items:stretch would make
+     cards equal-height per row, but the row height collapses to the cards'
+     min-content (≈0, since the title/abstract use overflow:hidden), squashing
+     them. `start` lets each card be its natural content height. */
+  align-items: start;
+  padding-bottom: calc(var(--spacing) * 2);
+}
+
+/* ── The card — title is the hero, everything else is quiet support ──────── */
+.rl-card {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 2.25);
+  padding: calc(var(--spacing) * 4.5) calc(var(--spacing) * 5);
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-lg);
+  background: var(--background-strong);
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  color: inherit;
+  box-shadow: var(--shadow-xs);
+  transition:
+    transform 0.16s ease,
+    box-shadow 0.16s ease,
+    border-color 0.16s ease;
+}
+
+/* Calm, neutral hover — small lift + soft shadow, no tilt or colored glow. */
+.rl-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-hover);
+  box-shadow: var(--shadow-md);
+}
+.rl-card:active {
+  transform: translateY(0);
+}
+.rl-card:focus-visible {
+  outline: 2px solid var(--border-selected);
+  outline-offset: 1px;
+}
+
+/* Pending → soft amber breathing highlight (the ONLY review color on a card);
+   rejected → faded. */
+.rl-card[data-status="pending"] {
+  border-color: color-mix(in srgb, var(--text-on-warning-base) 50%, var(--border-base));
+  animation: rl-breathe 2.4s ease-in-out infinite;
+}
+.rl-card[data-status="rejected"] {
+  opacity: 0.6;
+}
+@keyframes rl-breathe {
+  0%,
+  100% {
+    box-shadow: var(--shadow-xs), 0 0 0 0 color-mix(in srgb, var(--text-on-warning-base) 30%, transparent);
+  }
+  50% {
+    box-shadow: var(--shadow-xs), 0 0 0 5px color-mix(in srgb, var(--text-on-warning-base) 13%, transparent);
+  }
+}
+
+/* kind line — small, leads the card; dot carries the (desaturated) hue */
+.rl-card-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.75);
+}
+
+.rl-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.75);
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+  letter-spacing: 0.01em;
+  line-height: 1.4;
+  white-space: nowrap;
+  color: var(--text-weak);
+  flex: none;
+}
+
+.rl-kind-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--rl-kind-color, var(--kind-neutral));
+  flex: none;
+}
+
+.rl-card-title {
+  margin: 0;
+  font-size: var(--font-size-large);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-normal);
+  color: var(--text-strong);
+  letter-spacing: -0.005em;
+  /* Clamp ~2 lines. NOTE: -webkit-box line-clamp collapses to height:0 here —
+     the card is a flex column and flex items blockify -webkit-box (computed
+     becomes flow-root). Use block + max-height (em = font-size * lines * lh). */
+  display: block;
+  flex-shrink: 0; /* flex item + overflow:hidden makes min-height:auto = 0, so the title collapses in the flex column unless we opt out of shrinking */
+  max-height: 2.6em; /* 2 lines @ line-height 130% */
+  overflow: hidden;
+}
+
+.rl-card-abstract {
+  margin: 0;
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-large);
+  color: var(--text-base);
+  display: block;
+  flex-shrink: 0; /* see .rl-card-title — avoid flex-column collapse */
+  max-height: 3em; /* 2 lines @ line-height 150% */
+  overflow: hidden;
+}
+
+/* footer — obs · (scope) · time only; quiet mono with a hairline rule on top */
+.rl-card-meta {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  margin-top: calc(var(--spacing) * 0.75);
+  padding-top: calc(var(--spacing) * 2.5);
+  border-top: 1px solid var(--border-weaker-base);
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  color: var(--text-weak);
+}
+
+.rl-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1);
+  white-space: nowrap;
+}
+
+.rl-meta-item b {
+  color: var(--text-base);
+  font-weight: var(--font-weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+.rl-foot-scope {
+  color: var(--text-weaker);
+  white-space: nowrap;
+}
+
+/* scope chip — subtle bordered tag (used in the detail modal header) */
+.rl-scope {
+  display: inline-flex;
+  align-items: center;
+  padding: calc(var(--spacing) * 0.5) calc(var(--spacing) * 2);
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  color: var(--text-weak);
+  background: var(--surface-sunken);
+  white-space: nowrap;
+}
+
+/* review flag — the ONLY place review color appears on a card */
+.rl-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.25);
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+}
+.rl-flag-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  flex: none;
+}
+
+.rl-flag[data-status="pending"] {
+  color: var(--text-on-warning-base);
+}
+.rl-flag[data-status="pending"] .rl-flag-dot {
+  animation: rl-blink 1.5s ease-in-out infinite;
+}
+@keyframes rl-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.rl-flag[data-status="rejected"] {
+  color: var(--text-on-critical-base);
+}
+
+/* ── State blocks (loading / empty / error) ─────────────────────────────── */
+
+.rl-state {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 10) calc(var(--spacing) * 4);
+  text-align: center;
+}
+
+.rl-state-title {
+  font-size: var(--font-size-base);
+  color: var(--text-base);
+}
+
+.rl-state-detail {
+  font-size: var(--font-size-small);
+  color: var(--text-weak);
+  max-width: 42ch;
+  line-height: var(--line-height-large);
+}
+
+.rl-state[data-tone="error"] .rl-state-title {
+  color: var(--text-on-critical-base);
+}
+
+.rl-state-retry {
+  margin-top: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3);
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  background: var(--button-secondary-base);
+  color: var(--text-strong);
+  font-family: inherit;
+  font-size: var(--font-size-small);
+  cursor: pointer;
+}
+
+.rl-state-retry:hover {
+  background: var(--button-secondary-hover);
+  border-color: var(--border-hover);
+}
+
+/* skeleton shimmer cards while loading */
+.rl-skeleton {
+  height: 132px;
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(
+    100deg,
+    var(--surface-base) 30%,
+    var(--surface-base-hover) 50%,
+    var(--surface-base) 70%
+  );
+  background-size: 220% 100%;
+  animation: rl-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes rl-shimmer {
+  from {
+    background-position: 180% 0;
+  }
+  to {
+    background-position: -40% 0;
+  }
+}
+
+/* ── Detail modal ───────────────────────────────────────────────────────── */
+
+.rl-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(var(--spacing) * 6);
+  background: light-dark(rgba(17, 17, 17, 0.28), rgba(0, 0, 0, 0.6));
+  backdrop-filter: blur(3px);
+}
+
+.rl-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(680px, 100%);
+  max-height: min(86vh, 880px);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-2xl);
+  background: var(--background-strong);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.rl-modal-hd {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 5.5) calc(var(--spacing) * 6) calc(var(--spacing) * 4.5);
+  border-bottom: 1px solid var(--border-weak-base);
+}
+
+.rl-modal-hd-main {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 2.25);
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.rl-modal-hd-tags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: calc(var(--spacing) * 2);
+}
+
+/* header kind tag — slightly bigger dot than the card */
+.rl-modal-hd-tags .rl-kind {
+  color: var(--text-base);
+}
+.rl-modal-hd-tags .rl-kind-dot {
+  width: 8px;
+  height: 8px;
+}
+
+.rl-modal-title {
+  margin: 0;
+  font-size: 19px;
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  color: var(--text-strong);
+}
+
+.rl-modal-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--icon-base);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.rl-modal-close:hover {
+  background: var(--button-ghost-hover);
+  color: var(--icon-strong-base);
+}
+
+.rl-modal-bd {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: calc(var(--spacing) * 5);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 5);
+}
+
+/* Sections — a quiet label over prose / a dl grid */
+.rl-sec {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 2.25);
+}
+
+.rl-sec-label {
+  display: block;
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-weak);
+}
+
+/* In the edit form, labels still sit above their field with a small gap. */
+.rl-field > .rl-sec-label {
+  margin-bottom: calc(var(--spacing) * 1.5);
+}
+
+.rl-prose {
+  margin: 0;
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-large);
+  color: var(--text-base);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Statement — the focal block: the actionable rule, emphasized, with a left
+   border in the kind hue. */
+.rl-statement {
+  padding: calc(var(--spacing) * 4) calc(var(--spacing) * 4.5);
+  border-left: 3px solid var(--rl-kind-color, var(--cobalt-9));
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--border-weak-base);
+}
+
+.rl-statement-label {
+  display: block;
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-weak);
+  margin-bottom: calc(var(--spacing) * 2);
+}
+
+.rl-statement-text {
+  margin: 0;
+  font-size: var(--font-size-large);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.5;
+  color: var(--text-strong);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.rl-kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: calc(var(--spacing) * 1.5) calc(var(--spacing) * 4.5);
+  margin: 0;
+  font-size: var(--font-size-small);
+}
+
+.rl-kv dt {
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  color: var(--text-weak);
+}
+
+.rl-kv dd {
+  margin: 0;
+  color: var(--text-base);
+  word-break: break-word;
+}
+
+/* observations / refinement-history list */
+.rl-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 2);
+}
+
+.rl-entry {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 1.25);
+  padding: calc(var(--spacing) * 2.75) calc(var(--spacing) * 3.25);
+  border: 1px solid var(--border-weaker-base);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+}
+
+.rl-entry-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  color: var(--text-weak);
+}
+
+.rl-entry-head b {
+  color: var(--text-base);
+  font-weight: var(--font-weight-medium);
+}
+
+.rl-entry-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 calc(var(--spacing) * 1.5);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-weak-base);
+  background: var(--surface-base);
+  color: var(--text-base);
+  font-size: 10px;
+}
+
+.rl-entry-text {
+  margin: 0;
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-large);
+  color: var(--text-base);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.rl-empty-inline {
+  font-size: var(--font-size-small);
+  font-style: italic;
+  color: var(--text-weak);
+}
+
+/* ── Detail-modal: collapsible folds (observations / history) ────────────── */
+
+.rl-fold {
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-lg);
+  background: var(--background-strong);
+  overflow: hidden;
+}
+
+.rl-fold-hd {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2.25);
+  width: 100%;
+  padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  color: var(--text-strong);
+}
+
+.rl-fold-hd:hover {
+  background: var(--surface-base-hover);
+}
+
+.rl-fold-caret {
+  display: inline-flex;
+  color: var(--icon-base);
+  transition: transform 0.14s ease;
+}
+
+.rl-fold[data-open="true"] .rl-fold-caret {
+  transform: rotate(90deg);
+}
+
+.rl-fold-title {
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-medium);
+}
+
+.rl-fold-n {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 17px;
+  padding: 0 calc(var(--spacing) * 1.25);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-weak-base);
+  background: var(--surface-sunken);
+  color: var(--text-weak);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rl-fold-bd {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 1) calc(var(--spacing) * 4) calc(var(--spacing) * 4);
+  border-top: 1px solid var(--border-weaker-base);
+}
+
+.rl-fold:not([data-open="true"]) .rl-fold-bd {
+  display: none;
+}
+
+/* ── Detail-modal: error banner ──────────────────────────────────────────── */
+
+.rl-modal-err {
+  margin: calc(var(--spacing) * 3) calc(var(--spacing) * 5) 0;
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+  border: 1px solid color-mix(in srgb, var(--text-on-critical-base) 40%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--surface-critical-weak);
+  color: var(--text-on-critical-base);
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-large);
+  word-break: break-word;
+}
+
+/* ── Detail-modal: inline title editor (header) ──────────────────────────── */
+
+.rl-edit-title {
+  width: 100%;
+  margin: 0;
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  background: var(--surface-inset-base);
+  color: var(--text-strong);
+  font-family: inherit;
+  font-size: var(--font-size-large);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-normal);
+}
+
+.rl-edit-title:focus-visible {
+  outline: none;
+  border-color: var(--border-selected);
+}
+
+/* ── Detail-modal: edit form ─────────────────────────────────────────────── */
+
+.rl-editform {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 4);
+}
+
+.rl-field {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 1.5);
+}
+
+.rl-field-row {
+  display: flex;
+  gap: calc(var(--spacing) * 4);
+}
+
+.rl-field-row .rl-field {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.rl-input {
+  width: 100%;
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 2.5);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  background: var(--surface-inset-base);
+  color: var(--text-strong);
+  font-family: inherit;
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-large);
+}
+
+.rl-input:focus-visible {
+  outline: none;
+  border-color: var(--border-selected);
+}
+
+.rl-textarea {
+  resize: vertical;
+  min-height: 2.5em;
+  white-space: pre-wrap;
+}
+
+/* ── Detail-modal: observation delete + add ──────────────────────────────── */
+
+.rl-entry-del {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-weak);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.12s ease,
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.rl-entry:hover .rl-entry-del {
+  opacity: 1;
+}
+
+.rl-entry-del:hover:not(:disabled) {
+  background: var(--surface-critical-weak);
+  color: var(--text-on-critical-base);
+}
+
+.rl-entry-del:disabled {
+  cursor: default;
+  opacity: 0;
+}
+
+.rl-add-obs {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 2);
+  margin-top: calc(var(--spacing) * 3);
+}
+
+.rl-add-obs .rl-btn {
+  align-self: flex-end;
+}
+
+/* ── Detail-modal: action bar ────────────────────────────────────────────── */
+
+.rl-modal-ft {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: calc(var(--spacing) * 2);
+  padding: calc(var(--spacing) * 3.5) calc(var(--spacing) * 6);
+  border-top: 1px solid var(--border-weak-base);
+  background: var(--surface-sunken);
+}
+
+.rl-confirm-q {
+  font-size: var(--font-size-small);
+  color: var(--text-on-critical-base);
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+
+.rl-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--spacing) * 1.5);
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  background: var(--button-secondary-base);
+  color: var(--text-strong);
+  font-family: inherit;
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.4;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease,
+    opacity 0.12s ease;
+}
+
+.rl-btn:hover:not(:disabled) {
+  background: var(--button-secondary-hover);
+  border-color: var(--border-hover);
+}
+
+.rl-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* Footer actions are mostly ghost; tone lives in text/hover only, not fills. */
+
+.rl-btn-primary {
+  border-color: transparent;
+  background: var(--button-primary-base);
+  color: var(--text-on-interactive-base);
+}
+
+.rl-btn-primary:hover:not(:disabled) {
+  border-color: transparent;
+  filter: brightness(1.08);
+}
+
+/* approve — neutral by default, success tint surfaces on hover */
+.rl-btn-ok:hover:not(:disabled) {
+  color: var(--text-on-success-base);
+  border-color: color-mix(in srgb, var(--text-on-success-base) 40%, transparent);
+  background: var(--button-secondary-base);
+}
+
+/* reject — neutral by default, warning tint surfaces on hover */
+.rl-btn-warn:hover:not(:disabled) {
+  color: var(--text-on-warning-base);
+  border-color: color-mix(in srgb, var(--text-on-warning-base) 40%, transparent);
+  background: var(--button-secondary-base);
+}
+
+/* delete (confirmed) — quiet critical text, soft tonal hover fill */
+.rl-btn-danger,
+.rl-btn-danger-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-on-critical-base);
+}
+
+.rl-btn-danger:hover:not(:disabled),
+.rl-btn-danger-ghost:hover:not(:disabled) {
+  background: var(--surface-critical-weak);
+  border-color: transparent;
+}
+
+/* ── search + group toggle + tag sections (added) ───────────────────────── */
+.rl-search {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  flex: 1;
+  max-width: 360px;
+  min-width: 0;
+  padding: calc(var(--spacing) * 1.25) calc(var(--spacing) * 2.5);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  background: var(--surface-inset-base);
+  color: var(--icon-base);
+}
+.rl-search:focus-within {
+  border-color: var(--border-selected);
+  box-shadow: var(--ring);
+}
+.rl-search-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+  font: inherit;
+  font-size: var(--font-size-small);
+  color: var(--text-strong);
+}
+.rl-search-x {
+  border: 0;
+  background: transparent;
+  color: var(--text-weaker);
+  cursor: pointer;
+  display: inline-flex;
+  padding: 0;
+}
+.rl-search-x:hover { color: var(--text-base); }
+
+.rl-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2.5);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  background: var(--button-secondary-base);
+  color: var(--text-base);
+  font: inherit;
+  font-size: var(--font-size-small);
+  cursor: pointer;
+}
+.rl-toggle:hover {
+  background: var(--button-secondary-hover);
+  color: var(--text-strong);
+  border-color: var(--border-hover);
+}
+.rl-toggle[data-on="true"] {
+  background: var(--cobalt-3);
+  color: var(--cobalt-11);
+  border-color: var(--cobalt-6);
+}
+
+/* Grouped view: outer scroll, per-tag sections, inner non-scrolling grids. */
+.rl-sections {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 5);
+  padding-bottom: calc(var(--spacing) * 2);
+}
+/* Quiet section header — tag + count + a hairline rule that fills the row. */
+.rl-section-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  margin-bottom: calc(var(--spacing) * 3);
+  position: sticky;
+  top: 0;
+  background: var(--background-base);
+  padding: calc(var(--spacing) * 1) 0;
+  z-index: 1;
+}
+.rl-section-tag {
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-strong);
+}
+.rl-section-n {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 17px;
+  padding: 0 calc(var(--spacing) * 1.25);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-weak-base);
+  background: var(--surface-sunken);
+  color: var(--text-weak);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.rl-section-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--border-weaker-base);
+}
+.rl-grid-inner {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: calc(var(--spacing) * 3.5);
+  align-items: start;
+}

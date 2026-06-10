@@ -1,0 +1,17 @@
+{
+  // Merge this `mcp` block into your opencode project's opencode.jsonc (on the
+  // side running opencode — your Linux VM). The agent then auto-discovers every
+  // tool the win-host daemon advertises (outlook_search, notify_desktop, and
+  // anything a new capability adds) with zero further config: adding a tool is a
+  // Windows-side change only.
+  //
+  // Point `url` at the Windows host's IP on your host-only LAN, port = the
+  // daemon's serverPort (default 8799), path = /mcp.
+  "mcp": {
+    "winhost": {
+      "type": "remote",
+      "url": "http://192.168.56.1:8799/mcp",
+      "enabled": true
+    }
+  }
+}

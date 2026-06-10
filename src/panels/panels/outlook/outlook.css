@@ -1,0 +1,228 @@
+/**
+ * Outlook panel interior — search row + mail list, restyled to match the chat
+ * panel aesthetic: generous spacing, subtle 1px borders, var(--radius-lg) cards,
+ * hover states, var(--shadow-xs), refined typography. Uses ONLY semantic tokens.
+ * Panel-prefixed (.ol-*) class names to avoid clashing with app.css.
+ */
+
+/* ── search / toolbar row ──────────────────────────────────────────────────── */
+.ol-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* search field: icon + input inside a single rounded, focus-aware shell */
+.ol-search-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 220px;
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-lg);
+  padding: 7px 12px;
+  background: var(--surface-inset-base);
+  color: var(--icon-base);
+  transition: border-color 120ms ease;
+}
+.ol-search-field:focus-within {
+  border-color: var(--border-selected);
+}
+.ol-search-field svg {
+  flex: none;
+  color: var(--icon-base);
+}
+.ol-search-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 2px 0;
+  color: var(--text-strong);
+  font: inherit;
+  outline: none;
+}
+.ol-search-input::placeholder {
+  color: var(--text-weaker);
+}
+
+/* count stepper */
+.ol-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-lg);
+  padding: 6px 12px;
+  background: var(--surface-raised-base);
+  color: var(--text-weak);
+  font-size: var(--font-size-small);
+  white-space: nowrap;
+}
+.ol-count input {
+  width: 52px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--text-strong);
+  font: inherit;
+  font-weight: var(--font-weight-medium);
+  text-align: right;
+  outline: none;
+}
+
+/* search button — match chat's primary .btn with inline icon */
+.ol-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: var(--radius-lg);
+  padding: 9px 16px;
+  background: var(--text-strong);
+  color: var(--background-strong);
+  font: inherit;
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  box-shadow: var(--shadow-xs);
+  transition: opacity 120ms ease;
+}
+.ol-go:hover:not(:disabled) {
+  opacity: 0.84;
+}
+.ol-go:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ol-go svg {
+  margin: -1px 0;
+}
+
+/* ── states ────────────────────────────────────────────────────────────────── */
+.ol-error {
+  color: var(--text-on-critical-base);
+  font-size: var(--font-size-small);
+  margin: 12px 0 0;
+  padding: 9px 12px;
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  background: var(--surface-critical-weak);
+}
+.ol-empty {
+  margin-top: 14px;
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--text-weak);
+  border: 1px dashed var(--border-base);
+  border-radius: var(--radius-lg);
+}
+
+/* ── mail list ─────────────────────────────────────────────────────────────── */
+.ol-list {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ol-mail {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  position: relative;
+  padding: 13px 15px;
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised-base);
+  box-shadow: var(--shadow-xs);
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+.ol-mail:hover {
+  background: var(--surface-raised-base-hover);
+  border-color: var(--border-base);
+}
+
+/* unread accent: tinted surface + left accent bar */
+.ol-mail.unread {
+  background: var(--surface-interactive-weak);
+}
+.ol-mail.unread::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--text-interactive-base);
+}
+
+/* sender initial / avatar chip */
+.ol-avatar {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-medium);
+  text-transform: uppercase;
+  color: var(--text-weak);
+  background: var(--surface-weak);
+}
+.ol-mail.unread .ol-avatar {
+  color: var(--text-interactive-base);
+  background: var(--surface-interactive-base);
+}
+
+.ol-body {
+  flex: 1;
+  min-width: 0;
+}
+.ol-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+.ol-subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-strong);
+  font-weight: var(--font-weight-regular);
+}
+.ol-mail.unread .ol-subject {
+  font-weight: var(--font-weight-medium);
+}
+.ol-time {
+  flex: none;
+  color: var(--text-weak);
+  font-size: var(--font-size-small);
+  white-space: nowrap;
+}
+.ol-from {
+  margin-top: 2px;
+  color: var(--text-base);
+  font-size: var(--font-size-small);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ol-preview {
+  margin-top: 6px;
+  color: var(--text-weak);
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-large);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

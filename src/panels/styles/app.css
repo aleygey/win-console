@@ -1,0 +1,566 @@
+/**
+ * Shell + panel styling. Uses ONLY the semantic tokens from tokens.css (the
+ * opencode design system) so the whole console — rail, chat, outlook, notify —
+ * shares one palette with the exp panel and adapts to OS light/dark automatically.
+ */
+
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+body {
+  background: var(--background-base);
+  color: var(--text-base);
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-large);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.shell {
+  display: grid;
+  /* minmax(0,1fr): let the content column shrink below its content's min width
+     instead of overflowing the viewport. */
+  grid-template-columns: 232px minmax(0, 1fr);
+  height: 100vh;
+}
+
+/* ── rail ──────────────────────────────────────────────────────────────── */
+.rail {
+  background: var(--background-strong);
+  border-right: 1px solid var(--border-weaker-base);
+  display: flex;
+  flex-direction: column;
+  padding: 16px 12px;
+  gap: 1px;
+}
+.rail-head {
+  padding: 8px 10px 18px;
+}
+.rail-title {
+  font-size: var(--font-size-large);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-strong);
+  letter-spacing: -0.01em;
+}
+.rail-sub {
+  font-size: var(--font-size-small);
+  color: var(--text-weak);
+  margin-top: 1px;
+}
+.rail-section {
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-weaker);
+  padding: 12px 10px 6px;
+}
+.rail-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: var(--text-base);
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--font-size-base);
+  font-family: inherit;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+.rail-item:hover {
+  background: var(--button-ghost-hover);
+  color: var(--text-strong);
+}
+.rail-item[data-active="true"] {
+  background: var(--surface-interactive-base);
+  color: var(--text-interactive-base);
+}
+.rail-icon {
+  width: 18px;
+  text-align: center;
+  font-size: 15px;
+}
+.rail-label {
+  font-weight: var(--font-weight-medium);
+}
+.rail-foot {
+  margin-top: auto;
+  padding: 12px 10px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border-top: 1px solid var(--border-weaker-base);
+}
+.muted {
+  color: var(--text-weak);
+  font-size: var(--font-size-small);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── content / panel ───────────────────────────────────────────────────── */
+.content {
+  overflow: auto;
+  min-width: 0;
+  background: var(--background-base);
+}
+.empty {
+  color: var(--text-weak);
+  padding: 48px 24px;
+  text-align: center;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.panel-head {
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--border-weaker-base);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.panel-head h2 {
+  margin: 0;
+  font-size: var(--font-size-large);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-strong);
+  letter-spacing: -0.01em;
+}
+.panel-head .sub {
+  color: var(--text-weak);
+  font-size: var(--font-size-small);
+  margin-top: 3px;
+}
+.panel-body {
+  padding: 20px 24px;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── controls ──────────────────────────────────────────────────────────── */
+.row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+/* Text-like controls only — checkbox/radio keep their native rendering
+   (appearance:none + padding here would turn them into blank, dead-looking
+   boxes). */
+input:not([type="checkbox"]):not([type="radio"]),
+textarea,
+select {
+  appearance: none;
+  background: var(--surface-inset-base);
+  color: var(--text-strong);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  padding: 9px 12px;
+  font: inherit;
+  outline: none;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-weaker);
+}
+input:not([type="checkbox"]):not([type="radio"]):hover,
+textarea:hover,
+select:hover {
+  border-color: var(--border-hover);
+}
+input:not([type="checkbox"]):not([type="radio"]):focus,
+textarea:focus,
+select:focus {
+  border-color: var(--border-selected);
+  box-shadow: var(--ring);
+}
+/* Native checkbox/radio: tint to the accent so they read as on/off clearly. */
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--cobalt-9);
+  cursor: pointer;
+}
+textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 76px;
+  line-height: var(--line-height-large);
+}
+/* Custom select chevron so selects don't fall back to the gray native look. */
+select {
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238a8a8a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  cursor: pointer;
+}
+
+button.btn {
+  background: var(--text-strong);
+  color: var(--background-strong);
+  border: 0;
+  border-radius: var(--radius-md);
+  padding: 9px 16px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: var(--font-weight-medium);
+  transition: opacity 120ms ease;
+}
+button.btn:hover {
+  opacity: 0.84;
+}
+button.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+button.btn.ghost {
+  background: var(--button-secondary-base);
+  color: var(--text-strong);
+  border: 1px solid var(--border-base);
+}
+button.btn.ghost:hover {
+  background: var(--button-secondary-hover);
+  opacity: 1;
+}
+
+.error {
+  color: var(--text-on-critical-base);
+  font-size: var(--font-size-small);
+  margin: 10px 0;
+}
+.badge {
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: var(--radius-xl);
+  font-weight: var(--font-weight-medium);
+  background: var(--surface-interactive-base);
+  color: var(--text-interactive-base);
+}
+.badge.mock {
+  background: var(--surface-warning-weak);
+  color: var(--text-on-warning-base);
+}
+label.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: var(--font-size-small);
+  color: var(--text-weak);
+}
+label.field input,
+label.field select {
+  color: var(--text-strong);
+}
+
+/* ── chat ──────────────────────────────────────────────────────────────── */
+.chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-bottom: 8px;
+  max-width: 760px;
+  margin: 0 auto;
+}
+.msg {
+  max-width: 80%;
+  padding: 11px 14px;
+  border-radius: var(--radius-lg);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: var(--line-height-large);
+}
+.msg.user {
+  align-self: flex-end;
+  background: var(--surface-interactive-base);
+  color: var(--text-strong);
+}
+.msg.assistant {
+  align-self: flex-start;
+  background: var(--surface-raised-base);
+  color: var(--text-base);
+  border: 1px solid var(--border-weaker-base);
+}
+.msg.system {
+  align-self: center;
+  background: transparent;
+  color: var(--text-on-warning-base);
+  font-size: var(--font-size-small);
+}
+.msg img {
+  max-width: 240px;
+  border-radius: var(--radius-md);
+  margin-top: 8px;
+  display: block;
+}
+.chat-compose {
+  border-top: 1px solid var(--border-weaker-base);
+  padding: 14px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--background-strong);
+}
+.chat-compose .row {
+  max-width: 760px;
+  margin: 0 auto;
+  width: 100%;
+  justify-content: flex-end;
+}
+.chat-compose textarea {
+  max-width: 760px;
+  margin: 0 auto;
+}
+.img-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface-raised-base);
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  padding: 6px 8px;
+  align-self: center;
+  max-width: 760px;
+  width: 100%;
+}
+.img-chip img {
+  height: 38px;
+  border-radius: var(--radius-sm);
+}
+.img-chip button {
+  background: transparent;
+  border: 0;
+  color: var(--text-weak);
+  cursor: pointer;
+  margin-left: auto;
+}
+
+/* ── outlook ───────────────────────────────────────────────────────────── */
+.mail {
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  background: var(--surface-raised-base);
+  transition: background 120ms ease;
+}
+.mail:hover {
+  background: var(--surface-raised-base-hover);
+}
+.mail .top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+.mail .subject {
+  font-weight: var(--font-weight-medium);
+  color: var(--text-strong);
+}
+.mail .subject.unread::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-interactive-base);
+  margin-right: 8px;
+  vertical-align: middle;
+}
+.mail .meta {
+  color: var(--text-weak);
+  font-size: var(--font-size-small);
+  white-space: nowrap;
+}
+.mail .preview {
+  color: var(--text-base);
+  font-size: var(--font-size-small);
+  margin-top: 5px;
+}
+
+/* ── notify history ────────────────────────────────────────────────────── */
+.hist {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hist li {
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  padding: 9px 12px;
+  font-size: var(--font-size-small);
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  background: var(--surface-raised-base);
+}
+.hist li strong {
+  color: var(--text-strong);
+  font-weight: var(--font-weight-medium);
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.dot.info {
+  background: var(--text-interactive-base);
+}
+.dot.warn {
+  background: var(--text-on-warning-base);
+}
+.dot.error {
+  background: var(--text-on-critical-base);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   Polish layer — crisp icons, refined rail, premium chrome. Overrides above.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Brand mark in the rail header */
+.rail-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.rail-mark {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: linear-gradient(140deg, var(--cobalt-9), color-mix(in srgb, var(--cobalt-9) 62%, #16243f));
+  box-shadow: var(--shadow-xs);
+}
+.rail-head {
+  padding: 6px 8px 16px;
+}
+
+/* Icons inherit currentColor + crisp sizing */
+.rail-icon {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--icon-base);
+  transition: color 120ms ease;
+}
+.rail-item {
+  position: relative;
+  padding: 9px 11px;
+  font-weight: var(--font-weight-medium);
+}
+.rail-item:hover .rail-icon {
+  color: var(--icon-hover);
+}
+.rail-item[data-active="true"] {
+  background: var(--surface-interactive-base);
+}
+.rail-item[data-active="true"] .rail-icon {
+  color: var(--text-interactive-base);
+}
+/* left accent bar on the active item */
+.rail-item[data-active="true"]::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--text-interactive-base);
+}
+
+/* Buttons: align inline icons */
+button.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  box-shadow: var(--shadow-xs);
+}
+button.btn.ghost {
+  box-shadow: none;
+}
+button.btn svg {
+  margin: -1px 0;
+}
+
+/* Panel header may carry an icon to the left of the title */
+.panel-head .ph-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.panel-head .ph-icon {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-interactive-base);
+  background: var(--surface-interactive-base);
+}
+
+/* Refined scrollbars (webkit/chromium — Electron + Obsidian) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--gray-7) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--gray-7);
+  border-radius: 8px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--gray-8);
+  background-clip: padding-box;
+  border: 3px solid transparent;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Chat bubbles: a touch more refined */
+.msg.user {
+  box-shadow: var(--shadow-xs);
+}
+.msg.assistant {
+  box-shadow: var(--shadow-xs);
+}

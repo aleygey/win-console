@@ -1,0 +1,251 @@
+/**
+ * Notify panel interior — composer card + timeline history.
+ * Panel-prefixed (.nt-*) to avoid clashing with app.css. Tokens only.
+ */
+
+.nt-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  max-width: 600px;
+}
+
+/* ── composer card ─────────────────────────────────────────────────────── */
+.nt-card {
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised-base);
+  box-shadow: var(--shadow-xs);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.nt-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.nt-label {
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-weak);
+  letter-spacing: -0.005em;
+}
+.nt-input {
+  width: 100%;
+  background: var(--surface-inset-base);
+  color: var(--text-strong);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  padding: 9px 12px;
+  font: inherit;
+  outline: none;
+  transition: border-color 120ms ease;
+}
+.nt-input::placeholder {
+  color: var(--text-weaker);
+}
+.nt-input:focus {
+  border-color: var(--border-selected);
+}
+
+/* ── level pills ───────────────────────────────────────────────────────── */
+.nt-levels {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.nt-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-xl);
+  background: var(--surface-raised-base);
+  color: var(--text-base);
+  font: inherit;
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+.nt-pill:hover {
+  background: var(--surface-raised-base-hover);
+}
+.nt-pill-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.nt-pill[data-level="info"] .nt-pill-dot {
+  background: var(--text-interactive-base);
+}
+.nt-pill[data-level="warn"] .nt-pill-dot {
+  background: var(--text-on-warning-base);
+}
+.nt-pill[data-level="error"] .nt-pill-dot {
+  background: var(--text-on-critical-base);
+}
+
+/* selected states — tinted per level */
+.nt-pill[data-active="true"][data-level="info"] {
+  background: var(--surface-interactive-base);
+  border-color: var(--border-selected);
+  color: var(--text-interactive-base);
+}
+.nt-pill[data-active="true"][data-level="warn"] {
+  background: var(--surface-warning-weak);
+  border-color: var(--text-on-warning-base);
+  color: var(--text-on-warning-base);
+}
+.nt-pill[data-active="true"][data-level="error"] {
+  background: var(--surface-critical-weak);
+  border-color: var(--text-on-critical-base);
+  color: var(--text-on-critical-base);
+}
+
+/* ── footer row (level + send) ─────────────────────────────────────────── */
+.nt-foot {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.nt-send {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--text-strong);
+  color: var(--background-strong);
+  border: 0;
+  border-radius: var(--radius-md);
+  padding: 9px 16px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: var(--font-weight-medium);
+  box-shadow: var(--shadow-xs);
+  transition: opacity 120ms ease;
+}
+.nt-send:hover {
+  opacity: 0.84;
+}
+.nt-send svg {
+  margin: -1px 0;
+}
+
+.nt-error {
+  color: var(--text-on-critical-base);
+  font-size: var(--font-size-small);
+}
+
+/* ── history timeline ──────────────────────────────────────────────────── */
+.nt-hist-head {
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-weaker);
+  margin-bottom: 4px;
+}
+.nt-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.nt-item {
+  position: relative;
+  display: flex;
+  gap: 14px;
+  padding: 0 0 16px 0;
+}
+.nt-item:last-child {
+  padding-bottom: 0;
+}
+
+/* the rail (dot + connecting line) */
+.nt-rail {
+  position: relative;
+  flex: none;
+  width: 12px;
+  display: flex;
+  justify-content: center;
+}
+.nt-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  margin-top: 3px;
+  flex: none;
+  z-index: 1;
+  border: 2px solid var(--background-base);
+  box-shadow: 0 0 0 1px var(--border-base);
+}
+.nt-item:not(:last-child) .nt-rail::after {
+  content: "";
+  position: absolute;
+  top: 17px;
+  bottom: -4px;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--border-weak-base);
+}
+.nt-dot[data-level="info"] {
+  background: var(--text-interactive-base);
+}
+.nt-dot[data-level="warn"] {
+  background: var(--text-on-warning-base);
+}
+.nt-dot[data-level="error"] {
+  background: var(--text-on-critical-base);
+}
+
+/* the content card */
+.nt-body {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised-base);
+  padding: 11px 14px;
+  transition: background 120ms ease;
+}
+.nt-body:hover {
+  background: var(--surface-raised-base-hover);
+}
+.nt-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.nt-title {
+  color: var(--text-strong);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nt-time {
+  color: var(--text-weak);
+  font-size: var(--font-size-small);
+  font-family: var(--font-family-mono);
+  white-space: nowrap;
+  flex: none;
+}
+.nt-text {
+  color: var(--text-base);
+  font-size: var(--font-size-small);
+  margin-top: 4px;
+  word-break: break-word;
+}

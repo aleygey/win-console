@@ -1,0 +1,84 @@
+/* Management-panel widgets layered on top of the shared app.css tokens. */
+.card {
+  border: 1px solid var(--border, #2b2d31);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.card h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cap-row {
+  border-top: 1px solid var(--border, #2b2d31);
+  padding: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cap-row:first-of-type {
+  border-top: none;
+}
+.cap-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.cap-title {
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.cap-config {
+  margin-top: 6px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border, #2b2d31);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted, #9aa0a6);
+  cursor: pointer;
+}
+
+.badge[data-active="true"] {
+  color: #4ade80;
+}
+.badge[data-active="false"] {
+  color: #f87171;
+}
+.badge.small {
+  font-size: 10px;
+  padding: 1px 6px;
+  opacity: 0.7;
+}
+
+/* ── Rail count badges (pending review / unread) ───────────────────────────
+   A small tinted PILL pushed to the rail item's right edge. Coordinated tints
+   (not solid blue): cobalt for 通知 (info tone), amber/--warning for 经验库
+   (待审, warn tone). The rail markup lives in app.css; console.css loads after
+   it, so these rules layer on cleanly. The badge goes flat on the active item
+   so it stays legible over the cobalt selection fill. */
+.rail-badge {
+  margin-left: auto; min-width: 18px; height: 18px; padding: 0 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 999px; font-size: 11px; font-weight: 600;
+  font-variant-numeric: tabular-nums; line-height: 1;
+  background: var(--cobalt-3); color: var(--cobalt-11); border: 1px solid var(--cobalt-6);
+}
+.rail-badge[data-tone="warn"] {
+  background: var(--surface-warning-weak); color: var(--text-on-warning-base);
+  border-color: color-mix(in srgb, var(--text-on-warning-base) 38%, transparent);
+}
+.rail-item[data-active="true"] .rail-badge { background: var(--background-strong); }

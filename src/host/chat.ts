@@ -50,6 +50,7 @@ export function createChat(getConfig: () => GlobalConfig): ChatBackend {
       const parts: Array<Record<string, unknown>> = []
       if (req.text) parts.push({ type: "text", text: req.text })
       if (req.imageDataUrl) parts.push({ type: "file", mime: mimeOf(req.imageDataUrl), filename: "clipboard.png", url: req.imageDataUrl })
+      for (const f of req.files ?? []) parts.push({ type: "file", mime: f.mime, filename: f.name, url: f.dataUrl })
       if (parts.length === 0) return { ok: false, error: "空消息" }
 
       const body: Record<string, unknown> = { parts }

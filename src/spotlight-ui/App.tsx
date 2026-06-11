@@ -1,23 +1,12 @@
 /**
- * Spotlight — the hotkey fallback when Obsidian isn't running. Just the chat
- * panel with launcher chrome: Esc hides the window (the daemon also hides it on
- * blur). It reuses the exact same chat panel the console and Obsidian mount, so
- * there's one chat implementation, three surfaces.
+ * Spotlight — the hotkey quick-ask. A Raycast/macOS-Spotlight-style single-line
+ * bar that appears at the cursor and springs open into a compact conversation.
+ * (The full chat panel lives in the console; this is the lightweight "ask or
+ * assign a task anytime" surface.)
  */
-import { onCleanup, onMount, type JSX } from "solid-js"
-import { listPanels } from "../panels/registry"
-import "../panels/panels/chat"
+import type { JSX } from "solid-js"
+import { QuickAsk } from "./quick-ask"
 
 export default function App(): JSX.Element {
-  const chat = listPanels().find((p) => p.id === "chat")
-
-  onMount(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") window.winhost?.hide?.()
-    }
-    window.addEventListener("keydown", onKey)
-    onCleanup(() => window.removeEventListener("keydown", onKey))
-  })
-
-  return <div class="spotlight">{chat ? chat.render() : <div class="empty">chat 面板未注册</div>}</div>
+  return <QuickAsk />
 }

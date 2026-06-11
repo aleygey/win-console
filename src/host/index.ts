@@ -24,7 +24,7 @@ import { createNativeHost } from "./native"
 import { ensureWindowsToastIdentity, APP_ID } from "./native/notify"
 import { createTray } from "./shell/tray"
 import { registerHotkey } from "./shell/hotkey"
-import { makeConsoleWindow, makeSpotlightWindow, showWindow, toggleSpotlight } from "./shell/windows"
+import { makeConsoleWindow, makeSpotlightWindow, resizeSpotlight, showWindow, toggleSpotlight } from "./shell/windows"
 import { isObsidianRunning, raiseObsidian } from "./shell/obsidian"
 
 app.setAppUserModelId(APP_ID)
@@ -107,6 +107,9 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.on("spotlight:hide", () => spotlightWin?.hide())
+  ipcMain.on("spotlight:resize", (_e, height: number) => {
+    if (spotlightWin && !spotlightWin.isDestroyed()) resizeSpotlight(spotlightWin, height)
+  })
 
   createTray({
     hotkey: config.get().hotkey,

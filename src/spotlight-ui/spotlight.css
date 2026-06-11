@@ -1,30 +1,277 @@
-/* Frameless launcher chrome for the spotlight popup. */
+/* Spotlight QuickAsk — a frameless, OPAQUE popup whose window resizes to hug the
+   card. (Transparent windows need the GPU; we disable hardware acceleration for
+   the no-GPU 工位 fix, so a solid window that grows is what renders everywhere.
+   The OS provides the drop shadow + rounded corners.) */
 html,
 body,
 #root {
   height: 100%;
   margin: 0;
+  background: var(--background-strong);
+  overflow: hidden;
 }
-.spotlight {
-  height: 100vh;
+
+.qa {
+  box-sizing: border-box;
+  min-height: 100vh;
+  width: 100vw;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--border, #2b2d31);
-  border-radius: 12px;
+  font-family: var(--font-family-sans);
+  color: var(--text-strong);
+  background: var(--background-strong);
+}
+
+.qa-card {
+  width: 100%;
+  background: var(--background-strong);
   overflow: hidden;
-  background: var(--bg, #1a1b1e);
-  /* The frameless window is draggable from the panel header. */
+}
+.qa[data-drag="true"] .qa-card {
+  box-shadow: 0 0 0 2px var(--cobalt-9) inset;
+}
+
+/* ── the always-visible bar (also the window drag handle) ─────────────────── */
+.qa-bar {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px 9px 13px;
   -webkit-app-region: drag;
 }
-.spotlight .panel-head {
-  -webkit-app-region: drag;
+.qa-mark {
+  display: flex;
+  flex: none;
+  color: var(--cobalt-9);
 }
-.spotlight input,
-.spotlight textarea,
-.spotlight button,
-.spotlight .panel-body {
+.qa-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  resize: none;
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--text-strong);
+  /* override app.css's textarea{min-height:76px} — this is a single-line bar that
+     autoGrow()s up to max-height as you type. */
+  min-height: 0;
+  height: 27px;
+  max-height: 84px;
+  overflow-y: auto;
+  padding: 3px 0;
   -webkit-app-region: no-drag;
 }
-.spotlight .panel {
-  height: 100%;
+.qa-input::placeholder {
+  color: var(--text-weak);
+}
+.qa-input:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.qa-icon {
+  -webkit-app-region: no-drag;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--icon-base);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.qa-icon:hover {
+  background: var(--button-ghost-hover);
+  color: var(--icon-hover);
+}
+
+.qa-model {
+  -webkit-app-region: no-drag;
+  flex: none;
+  max-width: 116px;
+  font-size: 12px;
+  color: var(--text-base);
+  background: var(--surface-base);
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  padding: 3px 6px;
+  cursor: pointer;
+}
+.qa-model:focus {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+/* ── attachment chips ─────────────────────────────────────────────────────── */
+.qa-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 12px 9px;
+  -webkit-app-region: no-drag;
+}
+.qa-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 180px;
+  font-size: 12px;
+  color: var(--text-base);
+  background: var(--surface-weak);
+  border-radius: var(--radius-md);
+  padding: 3px 6px;
+}
+.qa-chip img {
+  width: 18px;
+  height: 18px;
+  object-fit: cover;
+  border-radius: 3px;
+}
+.qa-chip-name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qa-chip button {
+  display: flex;
+  border: none;
+  background: transparent;
+  color: var(--icon-base);
+  cursor: pointer;
+  padding: 0;
+}
+
+/* ── conversation (springs open on first send) ────────────────────────────── */
+/* The window itself resizes to fit (fitWindow), so the wrap opens INSTANTLY and
+   the content does the visible animation (fade + slide) — measuring a mid-flight
+   max-height transition would mis-size the window. */
+.qa-thread-wrap {
+  max-height: 0;
+  overflow: hidden;
+  border-top: 1px solid transparent;
+}
+.qa[data-expanded="true"] .qa-thread-wrap {
+  max-height: 360px;
+  border-top-color: var(--border-weak-base);
+}
+.qa-thread {
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  -webkit-app-region: no-drag;
+}
+/* One-shot slide-in. Opacity stays 1 (never animated) so the conversation is
+   ALWAYS visible — even if animations are paused/disabled, it just isn't offset. */
+.qa[data-expanded="true"] .qa-thread {
+  animation: qa-rise 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes qa-rise {
+  from {
+    transform: translateY(-8px);
+  }
+  to {
+    transform: none;
+  }
+}
+
+.qa-msg {
+  display: flex;
+}
+.qa-msg.user {
+  justify-content: flex-end;
+}
+.qa-msg.assistant,
+.qa-msg.system {
+  justify-content: flex-start;
+}
+.qa-bubble {
+  max-width: 82%;
+  font-size: 13.5px;
+  line-height: 1.5;
+  padding: 7px 10px;
+  border-radius: 11px;
+  overflow-wrap: anywhere;
+}
+.qa-msg.user .qa-bubble {
+  background: var(--cobalt-9);
+  color: #fff;
+}
+.qa-msg.assistant .qa-bubble {
+  background: var(--surface-weak);
+  color: var(--text-strong);
+}
+.qa-msg.system .qa-bubble {
+  background: var(--surface-critical-weak);
+  color: var(--text-on-critical-base);
+}
+.qa-bubble.markdown :first-child {
+  margin-top: 0;
+}
+.qa-bubble.markdown :last-child {
+  margin-bottom: 0;
+}
+.qa-bubble.markdown p {
+  margin: 0 0 6px;
+}
+.qa-bubble.markdown pre {
+  background: var(--background-weak);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  overflow-x: auto;
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+}
+.qa-bubble.markdown code {
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+}
+
+/* typing dots */
+.qa-typing {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.qa-typing i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-weak);
+  animation: qa-blink 1.2s infinite ease-in-out both;
+}
+.qa-typing i:nth-child(2) {
+  animation-delay: 0.18s;
+}
+.qa-typing i:nth-child(3) {
+  animation-delay: 0.36s;
+}
+@keyframes qa-blink {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+/* slim scrollbar inside the thread */
+.qa-thread::-webkit-scrollbar {
+  width: 8px;
+}
+.qa-thread::-webkit-scrollbar-thumb {
+  background: var(--border-base);
+  border-radius: 4px;
 }

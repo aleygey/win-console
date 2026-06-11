@@ -34,6 +34,15 @@ export type {
 declare global {
   interface Window {
     /** Injected by the console/spotlight preloads, or set by the Obsidian host. */
-    winhost?: { url: string; platform: string; mode?: string; hide?: () => void }
+    winhost?: {
+      url: string
+      platform: string
+      mode?: string
+      hide?: () => void
+      /** Spotlight only: resize the frameless popup as the answer expands. */
+      resize?: (height: number) => void
+      /** Spotlight only: callback each time the hotkey re-shows the window. */
+      onShown?: (cb: () => void) => void
+    }
   }
 }

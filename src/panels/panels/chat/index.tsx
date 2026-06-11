@@ -16,6 +16,7 @@ import { marked } from "marked"
 import { registerPanel } from "../../registry"
 import { api } from "../../bridge"
 import { Icon } from "../../icons"
+import { buildAttachmentPayload, readFiles, type Attachment } from "../../attach"
 import type { ChatMsg, ChatSession, ModelInfo, ModelRef } from "../../global"
 import "./chat.css"
 
@@ -24,7 +25,6 @@ const md = (t: string) => marked.parse(t, { async: false }) as string
 
 const LS_SESSION = "winhost-chat-session"
 const LS_MODEL = "winhost-chat-model"
-const LS_DIR = "winhost-chat-dir"
 
 const COMMANDS: Array<{ name: string; desc: string }> = [
   { name: "new", desc: "开始新会话" },
@@ -51,12 +51,13 @@ function ChatPanel() {
   const [msgs, setMsgs] = createSignal<ChatMsg[]>([])
   const [model, setModelSig] = createSignal<ModelRef | undefined>(loadModel())
   const [input, setInput] = createSignal("")
-  const [img, setImg] = createSignal<string | null>(null)
+  const [attachments, setAttachments] = createSignal<Attachment[]>([])
+  const [dragOver, setDragOver] = createSignal(false)
   const [busy, setBusy] = createSignal(false)
   const [err, setErr] = createSignal<string | undefined>()
   const [sessionsOpen, setSessionsOpen] = createSignal(false) // slide-over when narrow
-  const [dir, setDir] = createSignal(localStorage.getItem(LS_DIR) || "")
   const [slashIdx, setSlashIdx] = createSignal(0) // highlighted slash-menu row
+  let fileEl: HTMLInputElement | undefined
 
   // Slash-command menu: shown while typing "/cmd" (before any space).
   const slashMenu = createMemo(() => {
@@ -66,18 +67,14 @@ function ChatPanel() {
     return COMMANDS.filter((c) => c.name.startsWith(q))
   })
 
-  async function applyDir(v: string) {
-    setDir(v)
+  /** Add picked/dropped/pasted files as inline attachments (no path/dir needed). */
+  async function addFiles(files: FileList | File[]) {
+    setErr(undefined)
     try {
-      localStorage.setItem(LS_DIR, v)
+      const atts = await readFiles(files)
+      setAttachments((a) => [...a, ...atts])
     } catch {
-      /* ignore */
-    }
-    // Reload models with this directory so a project's own providers surface.
-    try {
-      setModels(await api.chat.models(v || undefined))
-    } catch {
-      /* ignore */
+      /* ignore unreadable files */
     }
   }
 
@@ -106,7 +103,7 @@ function ChatPanel() {
 
   onMount(async () => {
     try {
-      setModels(await api.chat.models(dir() || undefined))
+      setModels(await api.chat.models())
     } catch {
       /* no models */
     }
@@ -161,35 +158,29 @@ function ChatPanel() {
     await refreshSessions()
   }
 
-  async function attachImage() {
-    setErr(undefined)
-    // Reads the OS clipboard via the daemon — only works under the Electron app
-    // (the headless lite daemon has no clipboard access). Either way, pasting a
-    // screenshot straight into the box (Ctrl+V) works everywhere via pasteImage.
-    const d = await api.clipboard.image()
-    if (!d) {
-      setErr("没读到剪贴板图片 —— 可直接在输入框里 Ctrl+V 粘贴截图(需 OS 剪贴板读取请用 Electron 版)")
-      return
-    }
-    setImg(d)
-  }
-
-  /** Capture an image pasted straight into the compose box (browser-level, works
-   *  in the iframe / lite daemon too — no Electron/daemon clipboard needed). */
-  function pasteImage(e: ClipboardEvent) {
+  /** Paste images straight into the compose box (Ctrl+V), e.g. a screenshot. */
+  function onPaste(e: ClipboardEvent) {
     const items = e.clipboardData?.items
     if (!items) return
+    const imgs: File[] = []
     for (const it of Array.from(items)) {
       if (it.type.startsWith("image/")) {
-        const file = it.getAsFile()
-        if (!file) continue
-        e.preventDefault()
-        const reader = new FileReader()
-        reader.onload = () => setImg(typeof reader.result === "string" ? reader.result : null)
-        reader.readAsDataURL(file)
-        return
+        const f = it.getAsFile()
+        if (f) imgs.push(f)
       }
     }
+    if (imgs.length) {
+      e.preventDefault()
+      void addFiles(imgs)
+    }
+  }
+
+  /** Drag-drop files onto the compose box. */
+  function onDrop(e: DragEvent) {
+    e.preventDefault()
+    setDragOver(false)
+    const fs = e.dataTransfer?.files
+    if (fs && fs.length) void addFiles(fs)
   }
 
   async function runCommand(cmd: string): Promise<void> {
@@ -223,40 +214,42 @@ function ChatPanel() {
 
   async function send() {
     const text = input().trim()
-    const image = img()
-    if (!text && !image) return
+    const atts = attachments()
+    if (!text && atts.length === 0) return
     if (text.startsWith("/")) {
       setInput("")
       await runCommand(text)
       return
     }
+    // Attachments inline: text/code into the prompt, images/binaries as file parts.
+    const { textSuffix, files } = buildAttachmentPayload(atts)
     setErr(undefined)
     setBusy(true)
-    setMsgs([...msgs(), { role: "user", text }])
+    setMsgs([...msgs(), { role: "user", text: text || "（附件）" }])
     setInput("")
-    setImg(null)
+    setAttachments([])
     scrollDown()
 
-    const res = await api.chat.send({
-      text,
-      imageDataUrl: image,
-      sessionId: activeId(),
-      model: model(),
-      directory: dir() || undefined,
-    })
-    setBusy(false)
-    if (!res.ok) {
-      setErr(res.error)
-      setMsgs([...msgs(), { role: "system", text: `⚠ ${res.error ?? "发送失败"}` }])
-    } else {
-      if (!activeId() && res.sessionId) {
-        setActiveId(res.sessionId)
-        localStorage.setItem(LS_SESSION, res.sessionId)
-        void refreshSessions()
+    // try/finally so a thrown send never leaves the spinner stuck.
+    try {
+      const res = await api.chat.send({ text: text + textSuffix, files, sessionId: activeId(), model: model() })
+      if (!res.ok) {
+        setErr(res.error)
+        setMsgs([...msgs(), { role: "system", text: `⚠ ${res.error ?? "发送失败"}` }])
+      } else {
+        if (!activeId() && res.sessionId) {
+          setActiveId(res.sessionId)
+          localStorage.setItem(LS_SESSION, res.sessionId)
+          void refreshSessions()
+        }
+        setMsgs([...msgs(), { role: "assistant", text: res.reply ?? "(空回复)" }])
       }
-      setMsgs([...msgs(), { role: "assistant", text: res.reply ?? "(空回复)" }])
+    } catch (e) {
+      setMsgs([...msgs(), { role: "system", text: `⚠ ${e instanceof Error ? e.message : String(e)}` }])
+    } finally {
+      setBusy(false)
+      scrollDown()
     }
-    scrollDown()
   }
 
   function onKey(e: KeyboardEvent) {
@@ -430,43 +423,56 @@ function ChatPanel() {
               </For>
             </div>
           </Show>
-          <Show when={img()}>
-            <div class="img-chip">
-              <img src={img()!} alt="" />
-              <span class="muted">已附剪贴板图片</span>
-              <button onClick={() => setImg(null)} title="移除">
-                <Icon name="x" size={14} />
-              </button>
+          <Show when={attachments().length > 0}>
+            <div class="attach-chips">
+              <For each={attachments()}>
+                {(a, i) => (
+                  <span class="attach-chip" title={a.name}>
+                    <Show when={a.isImage && a.dataUrl} fallback={<Icon name="file-text" size={14} />}>
+                      <img src={a.dataUrl} alt="" />
+                    </Show>
+                    <span class="attach-chip-name">{a.name}</span>
+                    <button onClick={() => setAttachments((x) => x.filter((_, j) => j !== i()))} title="移除">
+                      <Icon name="x" size={13} />
+                    </button>
+                  </span>
+                )}
+              </For>
             </div>
           </Show>
-          <div class="compose-box">
+          <div
+            class="compose-box"
+            data-drag={dragOver()}
+            onDragOver={(e) => {
+              e.preventDefault()
+              setDragOver(true)
+            }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={onDrop}
+          >
             <textarea
-              placeholder="输入消息(Enter 发送 · Shift+Enter 换行),或 / 命令…"
+              placeholder="输入消息(Enter 发送 · Shift+Enter 换行),或 / 命令…  可粘贴/拖拽文件"
               value={input()}
               onInput={(e) => {
                 setInput(e.currentTarget.value)
                 setSlashIdx(0)
               }}
               onKeyDown={onKey}
-              onPaste={pasteImage}
+              onPaste={onPaste}
             />
             <div class="compose-actions">
-              <div class="dir-field" title="工作目录:opencode 将能读写此目录;粘贴 Windows 路径会自动映射到 WSL">
-                <Icon name="folder" size={15} />
-                <input
-                  class="dir-input"
-                  placeholder="工作目录(粘贴 D:\路径 → opencode 可访问)"
-                  value={dir()}
-                  onChange={(e) => void applyDir(e.currentTarget.value)}
-                />
-                <Show when={dir()}>
-                  <button class="icon-btn sm" title="清除目录" onClick={() => void applyDir("")}>
-                    <Icon name="x" size={13} />
-                  </button>
-                </Show>
-              </div>
-              <button class="icon-btn" title="贴入剪贴板图片" onClick={attachImage}>
-                <Icon name="image" size={18} />
+              <input
+                type="file"
+                multiple
+                ref={fileEl}
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  if (e.currentTarget.files) void addFiles(e.currentTarget.files)
+                  e.currentTarget.value = ""
+                }}
+              />
+              <button class="icon-btn" title="附加文件 / 图片" onClick={() => fileEl?.click()}>
+                <Icon name="paperclip" size={18} />
               </button>
               <button class="btn send" disabled={busy()} onClick={send}>
                 <Icon name="send" size={16} />

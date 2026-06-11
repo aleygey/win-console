@@ -20,6 +20,7 @@ import { builtinCapabilities } from "../src/host/capabilities"
 
 const here = fileURLToPath(new URL(".", import.meta.url))
 const consoleDir = join(here, "..", "out", "console")
+const spotlightDir = join(here, "..", "out", "spotlight")
 const PORT = Number(process.argv[2] || process.env.VERIFY_PORT || 8799)
 
 const native: NativeHost = {
@@ -54,8 +55,8 @@ async function main(): Promise<void> {
     dataDir: join(tmpdir(), `winhost-verify-data-${process.pid}`),
   })
   await registry.init()
-  startServer(PORT, { registry, config, events, consoleDir })
-  console.log(`[verify] daemon on http://127.0.0.1:${PORT}  (console from ${consoleDir})`)
+  startServer(PORT, { registry, config, events, consoleDir, spotlightDir })
+  console.log(`[verify] daemon on http://127.0.0.1:${PORT}  (console + spotlight served)`)
 }
 
 void main()

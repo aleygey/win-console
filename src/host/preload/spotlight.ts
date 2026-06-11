@@ -1,7 +1,10 @@
 /**
- * Spotlight preload — same minimal bridge as the console, tagged mode:"spotlight"
- * so the renderer can render just the chat panel with launcher chrome (Esc to
- * hide). The window hides itself on blur (see shell/windows.ts).
+ * Spotlight preload — minimal bridge, tagged mode:"spotlight". The renderer (a
+ * Raycast-style quick-ask) needs three things from the window it can't do itself:
+ *   - hide()            dismiss (Esc / send-then-stay is the renderer's call)
+ *   - resize(height)    grow the frameless window when the answer expands
+ *   - onShown(cb)       refocus the input each time the hotkey re-shows it
+ * The window also hides itself on blur (see shell/windows.ts).
  */
 import { contextBridge, ipcRenderer } from "electron"
 
@@ -14,6 +17,9 @@ contextBridge.exposeInMainWorld("winhost", {
   url: selfUrl(),
   platform: process.platform,
   mode: "spotlight",
-  /** Let the popup dismiss itself (Esc) without owning window state. */
   hide: () => ipcRenderer.send("spotlight:hide"),
+  /** Ask the main process to resize the popup to `height` px (keeps it on-screen). */
+  resize: (height: number) => ipcRenderer.send("spotlight:resize", Math.round(height)),
+  /** Fires every time the window is shown by the hotkey (for refocus/reset). */
+  onShown: (cb: () => void) => ipcRenderer.on("spotlight:shown", () => cb()),
 })

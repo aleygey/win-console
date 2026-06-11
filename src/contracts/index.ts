@@ -28,12 +28,17 @@ export type ModelRef = { providerID: string; modelID: string }
 export type ChatSendReq = {
   text: string
   imageDataUrl?: string | null
+  /** Inline file attachments (images + binaries) sent as file parts. Content
+   *  travels WITH the message, so the agent gets the file without any working
+   *  directory / Windows↔Linux path mapping. (Text files are inlined into `text`
+   *  by the front-end instead.) */
+  files?: Array<{ name: string; mime: string; dataUrl: string }>
   /** opencode session id to continue; omitted = create a fresh session. */
   sessionId?: string
   /** Model override for this prompt (provider+model). */
   model?: ModelRef
   /** Working directory for the session — a Windows path (D:\…) is auto-mapped to
-   *  the WSL mount (/mnt/d/…) so the opencode agent (in WSL) can read/write it. */
+   *  the WSL mount (/mnt/d/…). Set only from the 管理 global setting now. */
   directory?: string
 }
 export type ChatSendRes = { ok: boolean; reply?: string; error?: string; sessionId?: string }

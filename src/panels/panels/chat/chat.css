@@ -525,10 +525,48 @@
 .btn.send {
   padding: 8px 14px;
 }
-.chat .img-chip {
-  max-width: 820px;
-  margin: 0 auto;
+.compose-box[data-drag="true"] {
+  border-color: var(--cobalt-9);
+  background: var(--surface-interactive-weak);
 }
-.chat .img-chip button {
+
+/* file/image attachment chips above the compose box */
+.chat .attach-chips {
+  max-width: 820px;
+  width: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chat .attach-chip {
   display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  font-size: var(--font-size-small);
+  color: var(--text-base);
+  background: var(--surface-weak);
+  border-radius: var(--radius-md);
+  padding: 4px 8px;
+}
+.chat .attach-chip img {
+  width: 22px;
+  height: 22px;
+  object-fit: cover;
+  border-radius: 3px;
+}
+.chat .attach-chip-name {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat .attach-chip button {
+  display: inline-flex;
+  border: 0;
+  background: transparent;
+  color: var(--icon-base);
+  cursor: pointer;
+  padding: 0;
 }

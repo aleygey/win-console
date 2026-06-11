@@ -8,11 +8,17 @@
  * the daemon over HTTP; the preload only injects the daemon's self URL via
  * additionalArguments, nothing else (contextIsolation on, nodeIntegration off).
  */
-import { BrowserWindow } from "electron"
+import { BrowserWindow, screen } from "electron"
 import { join } from "node:path"
 import { attachWindowDiagnostics } from "./diagnostics"
 
 const selfArg = (port: number) => [`--winhost-url=http://127.0.0.1:${port}`]
+
+/** Spotlight popup geometry. The window is OPAQUE + frameless and resizes to hug
+ *  the card's content (transparent windows need the GPU, which we disable for the
+ *  no-GPU 工位 fix — so an opaque window that grows is what works everywhere). */
+export const SPOTLIGHT_WIDTH = 560
+export const SPOTLIGHT_COLLAPSED_H = 58
 
 export function makeConsoleWindow(port: number): BrowserWindow {
   const win = new BrowserWindow({
@@ -46,14 +52,18 @@ export function makeConsoleWindow(port: number): BrowserWindow {
 
 export function makeSpotlightWindow(port: number): BrowserWindow {
   const win = new BrowserWindow({
-    width: 680,
-    height: 460,
+    width: SPOTLIGHT_WIDTH,
+    height: SPOTLIGHT_COLLAPSED_H,
     show: false,
     frame: false,
+    hasShadow: true, // OS drop shadow (the window is opaque now)
     resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
     skipTaskbar: true,
     alwaysOnTop: true,
-    backgroundColor: "#1a1b1e",
+    backgroundColor: "#f6f6f5",
     title: "opencode · 快速对话",
     webPreferences: {
       preload: join(__dirname, "preload/spotlight.js"),
@@ -65,9 +75,9 @@ export function makeSpotlightWindow(port: number): BrowserWindow {
   attachWindowDiagnostics(win, "spotlight")
   // HTTP (not file://) for the same ES-module reason; daemon serves it at /spotlight/.
   void win.loadURL(`http://127.0.0.1:${port}/spotlight/`)
-  win.center()
-  // Spotlight UX: vanish when it loses focus, like a launcher.
-  win.on("blur", () => win.hide())
+  // NOTE: deliberately NO blur→hide. Opening the file picker / taking a screenshot
+  // (Win+Shift+S) blurs the window, which used to dismiss the popup mid-task. The
+  // user dismisses explicitly: Esc, the ✕ button, or re-pressing the hotkey.
   win.on("close", (e) => {
     if (!isQuitting()) {
       e.preventDefault()
@@ -81,10 +91,37 @@ export function toggleSpotlight(win: BrowserWindow): void {
   if (win.isVisible()) {
     win.hide()
   } else {
-    win.center()
+    positionSpotlightAtCursor(win)
     win.show()
     win.focus()
+    win.webContents.send("spotlight:shown")
   }
+}
+
+/** Place the popup near the mouse cursor, clamped to the current display's work
+ *  area so it never spills off-screen. Called each time the hotkey shows it. */
+export function positionSpotlightAtCursor(win: BrowserWindow): void {
+  const pt = screen.getCursorScreenPoint()
+  const wa = screen.getDisplayNearestPoint(pt).workArea
+  const [w, h] = win.getSize()
+  // Offset a touch up-left so the input bar sits right under the cursor.
+  let x = pt.x - 44
+  let y = pt.y - 14
+  x = Math.max(wa.x, Math.min(x, wa.x + wa.width - w))
+  y = Math.max(wa.y, Math.min(y, wa.y + wa.height - h))
+  win.setPosition(Math.round(x), Math.round(y))
+}
+
+/** Grow/shrink the popup as the answer expands, keeping the bar anchored where it
+ *  is (grows downward; nudges up if it would clip the work-area bottom). */
+export function resizeSpotlight(win: BrowserWindow, height: number): void {
+  if (win.isDestroyed()) return
+  const b = win.getBounds()
+  const wa = screen.getDisplayNearestPoint({ x: b.x, y: b.y }).workArea
+  const h = Math.max(SPOTLIGHT_COLLAPSED_H, Math.round(height))
+  let y = b.y
+  if (y + h > wa.y + wa.height) y = Math.max(wa.y, wa.y + wa.height - h)
+  win.setBounds({ x: b.x, y, width: SPOTLIGHT_WIDTH, height: h })
 }
 
 export function showWindow(win: BrowserWindow): void {

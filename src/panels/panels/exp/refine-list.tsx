@@ -263,8 +263,11 @@ export function RefineList(): JSX.Element {
   // createResource drives loading/error; refetch() re-runs the GET. The
   // fetcher tolerates the overview shape as well as a bare list, so the same
   // code path serves /refiner/overview today and /experiences later.
+  // The playbook's /refiner/overview defaults to limit=40 (and even reports
+  // total_experiences as the truncated count), so pass a high limit to get the
+  // whole library — otherwise the list silently stops at 40.
   const [data, { refetch }] = createResource<Experience[]>(async () => {
-    const overview = await client.get<RefinerOverview>("/refiner/overview")
+    const overview = await client.get<RefinerOverview>("/refiner/overview?limit=5000")
     return readExperiences(overview)
   })
 

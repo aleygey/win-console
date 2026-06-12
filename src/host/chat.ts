@@ -54,7 +54,10 @@ export function createChat(getConfig: () => GlobalConfig): ChatBackend {
       if (parts.length === 0) return { ok: false, error: "空消息" }
 
       const body: Record<string, unknown> = { parts }
-      if (req.model) body.model = { providerID: req.model.providerID, modelID: req.model.modelID }
+      // Per-message override wins; else the global default (mailflow + anything
+      // that doesn't pick a model); else opencode's own default.
+      const chosen = req.model ?? getConfig().model
+      if (chosen) body.model = { providerID: chosen.providerID, modelID: chosen.modelID }
 
       const res = await client.session.prompt({ path: { id: sessionId }, body, query: q })
       if (res.error || !res.data) return { ok: false, error: describe(res.error) ?? "prompt 失败" }

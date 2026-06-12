@@ -416,6 +416,84 @@
   color: var(--cobalt-11);
 }
 
+/* clickable id chips → open the experience peek */
+.rl-idchip-link {
+  cursor: pointer;
+}
+.rl-idchip-link:hover {
+  color: var(--text-interactive-base);
+  border-color: var(--border-selected);
+  background: var(--surface-interactive-weak);
+}
+
+/* ── experience peek modal (from any id chip) ──────────────────────────── */
+.rl-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(17, 17, 17, 0.32);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.rl-peek {
+  width: min(560px, 92vw);
+  max-height: 80vh;
+  overflow: auto;
+  background: var(--background-strong);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  padding: 14px 16px;
+}
+.rl-peek-hd {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.rl-peek-spacer {
+  flex: 1;
+}
+.rl-peek-x {
+  border: 0;
+  background: transparent;
+  color: var(--text-weak);
+  cursor: pointer;
+  font-size: 15px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+.rl-peek-x:hover {
+  background: var(--button-ghost-hover);
+  color: var(--text-strong);
+}
+.rl-peek-title {
+  margin: 4px 0 8px;
+  font-size: var(--font-size-large);
+  color: var(--text-strong);
+}
+.rl-peek-statement {
+  border-left: 3px solid var(--cobalt-9);
+  padding: 6px 10px;
+  background: var(--surface-interactive-weak);
+  border-radius: var(--radius-sm);
+  margin-bottom: 8px;
+  color: var(--text-strong);
+  white-space: pre-wrap;
+}
+.rl-peek-abstract {
+  color: var(--text-base);
+  white-space: pre-wrap;
+  margin: 0 0 8px;
+  line-height: var(--line-height-large);
+}
+.rl-peek-meta {
+  font-size: var(--font-size-small);
+  color: var(--text-weak);
+  margin-top: 4px;
+}
+
 /* ── Preformatted blocks (prompts / responses / JSON) ──────────────────── */
 
 .rl-pre {

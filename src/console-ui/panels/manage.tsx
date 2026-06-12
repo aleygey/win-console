@@ -10,11 +10,11 @@
  *   - the agent's tool inventory (what opencode discovers over /mcp)
  *   - a live health dot.
  */
-import { createSignal, For, Show, onMount, onCleanup } from "solid-js"
+import { createMemo, createSignal, For, Show, onMount, onCleanup } from "solid-js"
 import { registerPanel } from "../../panels/registry"
 import { api } from "../../panels/bridge"
 import { Icon } from "../../panels/icons"
-import type { CapabilityInfo, ConfigField, GlobalConfig, HostEvent } from "../../panels/global"
+import type { CapabilityInfo, ConfigField, GlobalConfig, HostEvent, ModelInfo } from "../../panels/global"
 import "./manage.css"
 
 /** Parse the path-map textarea ("WIN=>LINUX" per line) into the config shape. */
@@ -90,6 +90,15 @@ function ManagePanel() {
   const [cfg, setCfg] = createSignal<GlobalConfig | undefined>()
   const [healthy, setHealthy] = createSignal<boolean | undefined>()
   const [saved, setSaved] = createSignal<string | undefined>()
+  const [models, setModels] = createSignal<ModelInfo[]>([])
+
+  // Connected models first (the ones actually usable); fall back to a capped slice.
+  const modelOptions = createMemo(() => {
+    const connected = models().filter((m) => m.connected)
+    return connected.length ? connected : models().slice(0, 200)
+  })
+  const modelValue = (m?: { providerID: string; modelID: string }) =>
+    m ? `${m.providerID}\n${m.modelID}` : ""
 
   async function refresh() {
     try {
@@ -103,6 +112,10 @@ function ManagePanel() {
 
   onMount(() => {
     void refresh()
+    void api.chat
+      .models()
+      .then(setModels)
+      .catch(() => {})
     const off = api.events((e: HostEvent) => {
       if (e.type === "config:changed") void refresh()
     })
@@ -187,6 +200,43 @@ function ManagePanel() {
                       value={c.opencodeUrl}
                       onChange={(e) => patchGlobal({ opencodeUrl: e.currentTarget.value })}
                     />
+                  </label>
+                  <label class="mg-field">
+                    <span class="mg-field-label">
+                      默认模型
+                      <Hint text="邮件流、以及没单独选模型的会话都用它,持久生效(不会再回退到 connected 第一个)。留空=opencode 自己默认。对话/Ctrl+Space 框里手动选了模型则以那个为准。" />
+                    </span>
+                    <select
+                      value={modelValue(c.model)}
+                      onChange={(e) => {
+                        const v = e.currentTarget.value
+                        if (!v) return void patchGlobal({ model: null as unknown as undefined })
+                        const i = v.indexOf("\n")
+                        void patchGlobal({ model: { providerID: v.slice(0, i), modelID: v.slice(i + 1) } })
+                      }}
+                    >
+                      <option value="">默认(opencode 自选)</option>
+                      <Show
+                        when={
+                          c.model &&
+                          !modelOptions().some(
+                            (m) => m.providerID === c.model!.providerID && m.modelID === c.model!.modelID,
+                          )
+                        }
+                      >
+                        <option value={modelValue(c.model)}>
+                          {c.model!.providerID} / {c.model!.modelID}（当前）
+                        </option>
+                      </Show>
+                      <For each={modelOptions()}>
+                        {(m) => (
+                          <option value={modelValue(m)}>
+                            {m.label}
+                            {m.connected ? "" : "（未连接）"}
+                          </option>
+                        )}
+                      </For>
+                    </select>
                   </label>
                   <label class="mg-field">
                     <span class="mg-field-label">项目目录(可选,限定 session)</span>

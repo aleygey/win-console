@@ -31,14 +31,21 @@ import {
   createResource,
   createSignal,
   createMemo,
+  createEffect,
+  onMount,
+  onCleanup,
   For,
   Show,
   Switch,
   Match,
   type JSX,
 } from "solid-js"
+import { Portal } from "solid-js/web"
 import { useExpClient } from "../../api/client"
 import "./refine-log.css"
+
+/** Experience id whose detail "peek" modal is open (clicked from any id chip). */
+const [gPeekId, setGPeekId] = createSignal<string | undefined>()
 
 // -----------------------------------------------------------------------------
 // Types — mirrored from the exp plugin (read-only source of truth).
@@ -235,7 +242,117 @@ export function RefineLog(): JSX.Element {
     <div class="rl-root">
       <ActivityLog />
       <GlobalReview />
+      <ExpPeek />
     </div>
+  )
+}
+
+/** A clickable experience-id chip — opens the peek modal with the full content. */
+function IdChip(props: { id: string; keep?: boolean }): JSX.Element {
+  return (
+    <code
+      class="rl-idchip rl-idchip-link"
+      data-keep={props.keep}
+      role="button"
+      tabindex="0"
+      title={`${props.id} · 点击查看内容`}
+      onClick={() => setGPeekId(props.id)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault()
+          setGPeekId(props.id)
+        }
+      }}
+    >
+      {shortId(props.id)}
+      {props.keep ? " ★" : ""}
+    </code>
+  )
+}
+
+/** Read-only peek at one experience (fetched by id) — so ids in the plan / log
+ *  aren't dead-ends. Title + statement + abstract + meta; Esc / scrim closes. */
+function ExpPeek(): JSX.Element {
+  const client = useExpClient()
+  const [exp, setExp] = createSignal<any | null>(null)
+  const [loading, setLoading] = createSignal(false)
+  const [err, setErr] = createSignal<string | undefined>()
+
+  createEffect(() => {
+    const id = gPeekId()
+    if (!id) {
+      setExp(null)
+      return
+    }
+    setLoading(true)
+    setErr(undefined)
+    setExp(null)
+    client
+      .get<any>(`/refiner/experience/${id}`)
+      .then((e) => setExp(e?.experience ?? e ?? null))
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false))
+  })
+
+  onMount(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && gPeekId()) setGPeekId(undefined)
+    }
+    document.addEventListener("keydown", onKey)
+    onCleanup(() => document.removeEventListener("keydown", onKey))
+  })
+
+  const close = () => setGPeekId(undefined)
+
+  return (
+    <Show when={gPeekId()}>
+      <Portal>
+        <div class="rl-scrim" role="presentation" onClick={close}>
+          <div class="rl-peek" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div class="rl-peek-hd">
+              <code class="rl-idchip" title={gPeekId()}>
+                {shortId(gPeekId()!)}
+              </code>
+              <span class="rl-peek-spacer" />
+              <button type="button" class="rl-peek-x" aria-label="关闭" onClick={close}>
+                ✕
+              </button>
+            </div>
+            <Switch>
+              <Match when={loading()}>
+                <div class="rl-empty">加载中…</div>
+              </Match>
+              <Match when={err()}>
+                <div class="rl-error">加载失败：{err()}</div>
+              </Match>
+              <Match when={exp()}>
+                <div class="rl-peek-bd">
+                  <h3 class="rl-peek-title">{exp().title || "（无标题）"}</h3>
+                  <Show when={exp().statement}>
+                    <div class="rl-peek-statement">{exp().statement}</div>
+                  </Show>
+                  <Show when={exp().abstract}>
+                    <p class="rl-peek-abstract">{exp().abstract}</p>
+                  </Show>
+                  <Show when={exp().categories?.length}>
+                    <div class="rl-peek-meta">分类：{exp().categories.join(" · ")}</div>
+                  </Show>
+                  <Show when={exp().kind}>
+                    <div class="rl-peek-meta">
+                      类型：{exp().kind} · 范围：{exp().scope ?? "—"} · 观察：
+                      {exp().observations?.length ?? 0}
+                    </div>
+                  </Show>
+                </div>
+              </Match>
+              <Match when={!exp()}>
+                <div class="rl-empty">找不到该经验（可能已被合并 / 删除）。</div>
+              </Match>
+            </Switch>
+          </div>
+        </div>
+      </Portal>
+    </Show>
   )
 }
 
@@ -391,13 +508,7 @@ function RunCard(props: { run: RefinerLogEntry; open: boolean; onToggle: () => v
             <div class="rl-run-touched">
               <span class="rl-k">涉及 experience</span>
               <div class="rl-chips">
-                <For each={props.run.experience_ids}>
-                  {(id) => (
-                    <code class="rl-idchip" title={id}>
-                      {shortId(id)}
-                    </code>
-                  )}
-                </For>
+                <For each={props.run.experience_ids}>{(id) => <IdChip id={id} />}</For>
               </div>
             </div>
           </Show>
@@ -803,14 +914,7 @@ function GlobalReview(): JSX.Element {
                                 合并
                               </span>
                               <div class="rl-chips">
-                                <For each={m.ids}>
-                                  {(id) => (
-                                    <code class="rl-idchip" data-keep={id === m.keep} title={id}>
-                                      {shortId(id)}
-                                      {id === m.keep ? " ★" : ""}
-                                    </code>
-                                  )}
-                                </For>
+                                <For each={m.ids}>{(id) => <IdChip id={id} keep={id === m.keep} />}</For>
                               </div>
                             </div>
                             <div class="rl-plan-reason">{m.reason}</div>
@@ -833,9 +937,7 @@ function GlobalReview(): JSX.Element {
                               <span class="rl-tag" data-tone="delete">
                                 删除
                               </span>
-                              <code class="rl-idchip" title={d.id}>
-                                {shortId(d.id)}
-                              </code>
+                              <IdChip id={d.id} />
                             </div>
                             <div class="rl-plan-reason">{d.reason}</div>
                           </PlanRow>
@@ -857,13 +959,9 @@ function GlobalReview(): JSX.Element {
                               <span class="rl-tag" data-tone="conflict">
                                 冲突
                               </span>
-                              <code class="rl-idchip" title={c.a_id}>
-                                {shortId(c.a_id)}
-                              </code>
+                              <IdChip id={c.a_id} />
                               <span class="rl-vs">×</span>
-                              <code class="rl-idchip" title={c.b_id}>
-                                {shortId(c.b_id)}
-                              </code>
+                              <IdChip id={c.b_id} />
                               <span class="rl-resolution">{RESOLUTION_LABEL[c.resolution]}</span>
                             </div>
                             <div class="rl-plan-reason">{c.reason}</div>
@@ -908,13 +1006,7 @@ function GlobalReview(): JSX.Element {
                   <Match when={activeTab() === "keeps"}>
                     <PlanGroup title="保留原样 Keeps" count={p().keeps_as_is.length}>
                       <div class="rl-chips rl-chips-wrap">
-                        <For each={p().keeps_as_is}>
-                          {(id) => (
-                            <code class="rl-idchip" title={id}>
-                              {shortId(id)}
-                            </code>
-                          )}
-                        </For>
+                        <For each={p().keeps_as_is}>{(id) => <IdChip id={id} />}</For>
                       </div>
                     </PlanGroup>
                   </Match>
@@ -965,13 +1057,9 @@ function RelationRow(props: {
         <span class="rl-tag" data-tone={props.removed ? "delete" : "relation"}>
           {props.removed ? "删边" : "加边"}
         </span>
-        <code class="rl-idchip" title={props.rel.from}>
-          {shortId(props.rel.from)}
-        </code>
+        <IdChip id={props.rel.from} />
         <span class="rl-arrow">→</span>
-        <code class="rl-idchip" title={props.rel.to}>
-          {shortId(props.rel.to)}
-        </code>
+        <IdChip id={props.rel.to} />
         <span class="rl-relkind" data-kind={props.rel.kind}>
           {REL_KIND_LABEL[props.rel.kind]}
         </span>

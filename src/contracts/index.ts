@@ -304,6 +304,10 @@ export interface GlobalConfig {
   directory?: string
   hotkey: string
   serverPort: number
+  /** Default model for sessions that don't override it (mailflow, and any send
+   *  without an explicit per-message model). Persists, so it keeps applying —
+   *  not just the first session. Unset = opencode's own default. */
+  model?: ModelRef
   /** Capabilities the user switched off in the console. */
   disabledCapabilities: string[]
   /** Per-capability settings keyed by capability id. */

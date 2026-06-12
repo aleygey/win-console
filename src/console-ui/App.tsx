@@ -134,7 +134,7 @@ export default function App(props: { expClient?: ExpClient }): JSX.Element {
     // Best-effort pending-review count for 经验库.
     try {
       const client = props.expClient ?? createClient(resolveBaseUrl())
-      const overview = await client.get<RefinerOverview>("/refiner/overview")
+      const overview = await client.get<RefinerOverview>("/refiner/overview?limit=5000")
       const pending = (overview.experiences ?? []).filter((e) => e.review_status === "pending").length
       setExpPending(pending)
     } catch {

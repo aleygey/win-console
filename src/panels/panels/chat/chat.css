@@ -8,6 +8,17 @@
   position: relative;
 }
 
+/* Collapse the session list (wide screens) to give the chat full width. */
+.chat[data-collapsed="true"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+.chat[data-collapsed="true"] .chat-rail {
+  display: none;
+}
+.chat-rail-collapse[data-on="true"] {
+  color: var(--text-interactive-base);
+}
+
 /* Narrow (e.g. a slim Obsidian side leaf): collapse the sessions rail into a
    slide-over toggled by the bar button, so the chat stays usable. */
 @container (max-width: 680px) {
@@ -28,6 +39,13 @@
   }
   .chat-sessions-toggle {
     display: inline-flex !important;
+  }
+  /* narrow uses the slide-over (toggled above), not the wide collapse button */
+  .chat-rail-collapse {
+    display: none !important;
+  }
+  .chat[data-collapsed="true"] .chat-rail {
+    display: flex; /* restore the slide-over even if collapsed on wide */
   }
 }
 

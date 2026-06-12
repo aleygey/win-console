@@ -25,6 +25,7 @@ const md = (t: string) => marked.parse(t, { async: false }) as string
 
 const LS_SESSION = "winhost-chat-session"
 const LS_MODEL = "winhost-chat-model"
+const LS_RAIL = "winhost-chat-rail-collapsed"
 
 const COMMANDS: Array<{ name: string; desc: string }> = [
   { name: "new", desc: "开始新会话" },
@@ -56,8 +57,19 @@ function ChatPanel() {
   const [busy, setBusy] = createSignal(false)
   const [err, setErr] = createSignal<string | undefined>()
   const [sessionsOpen, setSessionsOpen] = createSignal(false) // slide-over when narrow
+  const [railCollapsed, setRailCollapsed] = createSignal(localStorage.getItem(LS_RAIL) === "1") // hide list (wide)
   const [slashIdx, setSlashIdx] = createSignal(0) // highlighted slash-menu row
   let fileEl: HTMLInputElement | undefined
+
+  const toggleRail = () => {
+    const v = !railCollapsed()
+    setRailCollapsed(v)
+    try {
+      localStorage.setItem(LS_RAIL, v ? "1" : "0")
+    } catch {
+      /* ignore */
+    }
+  }
 
   // Slash-command menu: shown while typing "/cmd" (before any space).
   const slashMenu = createMemo(() => {
@@ -288,7 +300,7 @@ function ChatPanel() {
   }
 
   return (
-    <div class="chat">
+    <div class="chat" data-collapsed={railCollapsed()}>
       <aside class="chat-rail" data-open={sessionsOpen()}>
         <button class="chat-new" onClick={newChat}>
           <Icon name="plus" size={16} /> 新会话
@@ -315,6 +327,14 @@ function ChatPanel() {
               class="icon-btn chat-sessions-toggle"
               title="会话列表"
               onClick={() => setSessionsOpen((v) => !v)}
+            >
+              <Icon name="panel-left" size={17} />
+            </button>
+            <button
+              class="icon-btn chat-rail-collapse"
+              title={railCollapsed() ? "显示会话列表" : "隐藏会话列表(腾出宽度)"}
+              data-on={railCollapsed()}
+              onClick={toggleRail}
             >
               <Icon name="panel-left" size={17} />
             </button>

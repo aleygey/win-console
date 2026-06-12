@@ -110,6 +110,15 @@ function fill(tpl: string, m: MailMessage): string {
     .replace(/\{body\}/g, m.body)
 }
 
+/** Text to hand the agent for a session/reply. Fills placeholders; if the
+ *  (custom) prompt references NONE of them, append the full mail so the agent
+ *  always has the email content — the user shouldn't have to add {body} etc. */
+function mailText(tpl: string, m: MailMessage): string {
+  const filled = fill(tpl, m)
+  if (/\{(subject|from|body|received)\}/.test(tpl)) return filled
+  return `${filled}\n\n--- 邮件内容 ---\n主题:${m.subject}\n发件人:${m.from}\n时间:${m.received}\n\n正文:\n${m.body}`
+}
+
 function preview(m: MailMessage): string {
   return (m.body || "").replace(/\s+/g, " ").trim().slice(0, 160)
 }
@@ -137,7 +146,7 @@ async function dispatch(ctx: HostContext, rule: MailRule, m: MailMessage): Promi
       item.status = "done"
       item.decidedAt = Date.now()
     } else if (rule.action === "trigger-session") {
-      const res = await ctx.native.chat.send({ text: fill(prompt, m), directory: rule.directory, model: rule.model })
+      const res = await ctx.native.chat.send({ text: mailText(prompt, m), directory: rule.directory, model: rule.model })
       if (res.ok) {
         item.sessionId = res.sessionId
         item.status = "done"
@@ -148,7 +157,7 @@ async function dispatch(ctx: HostContext, rule: MailRule, m: MailMessage): Promi
       }
     } else {
       // ai-review-reply: draft only — never sends here.
-      const res = await ctx.native.chat.send({ text: fill(prompt, m), directory: rule.directory, model: rule.model })
+      const res = await ctx.native.chat.send({ text: mailText(prompt, m), directory: rule.directory, model: rule.model })
       if (res.ok) {
         item.draft = res.reply ?? ""
         item.sessionId = res.sessionId

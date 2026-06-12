@@ -70,16 +70,25 @@ export function QuickAsk() {
     const connected = models().filter((m) => m.connected)
     return connected.length ? connected : models().slice(0, 150)
   })
+  // -1 = follow opencode's configured default (no model override on send).
   const modelIndex = createMemo(() => {
     const m = model()
-    const i = modelOptions().findIndex((o) => o.providerID === m?.providerID && o.modelID === m?.modelID)
-    return i < 0 ? 0 : i
+    if (!m) return -1
+    return modelOptions().findIndex((o) => o.providerID === m.providerID && o.modelID === m.modelID)
   })
   const shortLabel = (m: ModelInfo) => m.label.split("/").pop()?.trim() || m.modelID
 
   function pickModel(i: number) {
     const m = modelOptions()[i]
-    if (!m) return
+    if (!m) {
+      setModel(undefined)
+      try {
+        localStorage.removeItem(LS_MODEL)
+      } catch {
+        /* ignore */
+      }
+      return
+    }
     const ref = { providerID: m.providerID, modelID: m.modelID }
     setModel(ref)
     try {
@@ -94,10 +103,6 @@ export function QuickAsk() {
       setModels(await api.chat.models())
     } catch {
       /* no models yet */
-    }
-    if (!model()) {
-      const m = models().find((x) => x.connected) ?? models()[0]
-      if (m) setModel({ providerID: m.providerID, modelID: m.modelID })
     }
     // Refocus the input every time the hotkey re-shows the window.
     window.winhost?.onShown?.(() => queueMicrotask(() => inputEl?.focus()))
@@ -259,9 +264,7 @@ export function QuickAsk() {
             value={String(modelIndex())}
             onChange={(e) => pickModel(Number(e.currentTarget.value))}
           >
-            <Show when={modelOptions().length === 0}>
-              <option value="0">默认</option>
-            </Show>
+            <option value="-1">默认</option>
             <For each={modelOptions()}>{(m, i) => <option value={String(i())}>{shortLabel(m)}</option>}</For>
           </select>
           <button class="qa-icon" title="关闭 (Esc)" onClick={() => window.winhost?.hide?.()} aria-label="关闭">

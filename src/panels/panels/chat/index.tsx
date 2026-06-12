@@ -107,10 +107,6 @@ function ChatPanel() {
     } catch {
       /* no models */
     }
-    if (!model()) {
-      const m = models().find((x) => x.connected) ?? models()[0]
-      if (m) setModelSig({ providerID: m.providerID, modelID: m.modelID })
-    }
     await refreshSessions()
     await loadHistory(activeId())
   })
@@ -128,6 +124,17 @@ function ChatPanel() {
   })
 
   function setModel(v: string) {
+    // Empty value = follow opencode's configured default (send without a model
+    // override) — same behaviour as mailflow rules with no model set.
+    if (!v) {
+      setModelSig(undefined)
+      try {
+        localStorage.removeItem(LS_MODEL)
+      } catch {
+        /* ignore */
+      }
+      return
+    }
     const [providerID, modelID] = v.split(SEP)
     const ref: ModelRef = { providerID, modelID }
     setModelSig(ref)
@@ -321,9 +328,7 @@ function ChatPanel() {
             <label class="chat-model">
             <Icon name="cpu" size={15} />
             <select value={modelValue()} onChange={(e) => setModel(e.currentTarget.value)}>
-              <Show when={models().length === 0}>
-                <option value="">默认模型</option>
-              </Show>
+              <option value="">默认(跟随 opencode 配置)</option>
               <For each={modelOptions()}>
                 {(m) => (
                   <option value={m.providerID + SEP + m.modelID}>

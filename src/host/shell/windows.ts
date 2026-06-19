@@ -57,6 +57,7 @@ export function makeSpotlightWindow(port: number): BrowserWindow {
     show: false,
     frame: false,
     hasShadow: true, // OS drop shadow (the window is opaque now)
+    roundedCorners: true, // Win11 rounds the frameless window; no-op on Win10
     resizable: false,
     minimizable: false,
     maximizable: false,

@@ -152,19 +152,25 @@ const VIEW_H = 760
 const NODE_R = 6
 const MARGIN = 64 // keep nodes off the canvas edge so labels have room
 
-type Positioned = GraphExp & { x: number; y: number; deg: number }
+type Positioned = GraphExp & { x: number; y: number; deg: number; cluster: string }
+
+/** First-level category (or the kind as a fallback) — the cluster a node belongs
+ *  to, so related experiences group on the canvas instead of spreading evenly. */
+function clusterKey(e: GraphExp): string {
+  const c = (e.categories ?? [])[0]
+  if (c) return c.includes("/") ? c.slice(0, c.indexOf("/")) : c
+  return e.kind || "其他"
+}
 
 /**
- * Force-directed layout (deterministic Fruchterman–Reingold).
+ * Force-directed layout (deterministic Fruchterman–Reingold) with CATEGORY
+ * CLUSTERING. Each category gets an anchor point on a ring around the canvas
+ * centre; every node is pulled toward its category's anchor (in addition to edge
+ * attraction + universal repulsion). So sparse / disconnected libraries no longer
+ * collapse into one uniform square — they break into readable category clusters,
+ * with edge-connected nodes drawn together within and across groups.
  *
- * Connected experiences attract into clusters while everything repels, so a
- * glance shows *which group of exps are related* (position encodes relatedness,
- * unlike the old single ring where position was meaningless). Each node's degree
- * is captured so the renderer can size hubs larger.
- *
- * Deterministic — initial positions seed from an id-sorted circle and the
- * simulation runs a fixed number of cooling iterations (no Math.random), so the
- * same graph always lays out identically across reloads.
+ * Deterministic (id-seeded, no Math.random) so the same graph paints identically.
  */
 function computeLayout(
   exps: GraphExp[],
@@ -175,35 +181,37 @@ function computeLayout(
   const n = exps.length
   if (n === 0) return { positioned: [], byId: new Map() }
 
-  // Degree — drives both attraction weighting and node sizing.
   const degree = new Map<string, number>()
   for (const e of edges) {
     degree.set(e.from, (degree.get(e.from) ?? 0) + 1)
     degree.set(e.to, (degree.get(e.to) ?? 0) + 1)
   }
 
-  // Deterministic seed: an id-sorted circle.
+  // Category anchors on a ring (deterministic order). One cluster ⇒ centre.
+  const clusters = [...new Set(exps.map(clusterKey))].sort((a, b) => a.localeCompare(b))
+  const anchor = new Map<string, { x: number; y: number }>()
+  const ringR = clusters.length <= 1 ? 0 : Math.min(VIEW_W, VIEW_H) * 0.3
+  clusters.forEach((c, i) => {
+    const a = (i / clusters.length) * Math.PI * 2 - Math.PI / 2
+    anchor.set(c, { x: cx + Math.cos(a) * ringR, y: cy + Math.sin(a) * ringR })
+  })
+
+  // Seed each node near its cluster anchor (id-sorted jitter angle).
   const sorted = [...exps].sort((a, b) => a.id.localeCompare(b.id))
-  const seedR = Math.min(VIEW_W, VIEW_H) / 3
   type Node = Positioned & { dx: number; dy: number }
   const nodes: Node[] = sorted.map((e, i) => {
+    const cl = clusterKey(e)
+    const c = anchor.get(cl) ?? { x: cx, y: cy }
     const a = (i / n) * Math.PI * 2
-    return {
-      ...e,
-      deg: degree.get(e.id) ?? 0,
-      x: cx + Math.cos(a) * seedR,
-      y: cy + Math.sin(a) * seedR,
-      dx: 0,
-      dy: 0,
-    }
+    return { ...e, deg: degree.get(e.id) ?? 0, cluster: cl, x: c.x + Math.cos(a) * 36, y: c.y + Math.sin(a) * 36, dx: 0, dy: 0 }
   })
   const pos = new Map(nodes.map((nd) => [nd.id, nd]))
   const links = edges.filter((e) => pos.has(e.from) && pos.has(e.to))
 
-  const k = Math.sqrt((VIEW_W * VIEW_H) / n) * 0.55 // ideal edge length
+  const k = Math.sqrt((VIEW_W * VIEW_H) / n) * 0.42 // ideal edge length (tighter)
   let temp = VIEW_W / 8
 
-  for (let it = 0; it < 320; it++) {
+  for (let it = 0; it < 340; it++) {
     for (const nd of nodes) {
       nd.dx = 0
       nd.dy = 0
@@ -236,10 +244,12 @@ function computeLayout(
       b.dx += (ddx / dist) * att
       b.dy += (ddy / dist) * att
     }
-    // Weak gravity to center so disconnected nodes don't drift off-canvas.
+    // Cluster gravity — pull each node to its CATEGORY anchor (the key change;
+    // makes disconnected nodes form readable groups instead of one square).
     for (const nd of nodes) {
-      nd.dx += (cx - nd.x) * 0.012
-      nd.dy += (cy - nd.y) * 0.012
+      const c = anchor.get(nd.cluster) ?? { x: cx, y: cy }
+      nd.dx += (c.x - nd.x) * 0.06
+      nd.dy += (c.y - nd.y) * 0.06
     }
     // Apply, capped by temperature; clamp to the viewport.
     for (const nd of nodes) {
@@ -290,6 +300,21 @@ export function RefineGraph(): JSX.Element {
   const exps = createMemo(() => graph()?.experiences ?? [])
   const allEdges = createMemo(() => graph()?.edges ?? [])
   const layout = createMemo(() => computeLayout(exps(), allEdges()))
+
+  // Category cluster centroids (from the laid-out nodes) → faint backdrop labels
+  // so each group is legible. Only when there's more than one cluster.
+  const clusterLabels = createMemo(() => {
+    const groups = new Map<string, { x: number; y: number; n: number }>()
+    for (const p of layout().positioned) {
+      const g = groups.get(p.cluster) ?? { x: 0, y: 0, n: 0 }
+      g.x += p.x
+      g.y += p.y
+      g.n += 1
+      groups.set(p.cluster, g)
+    }
+    if (groups.size <= 1) return []
+    return [...groups.entries()].map(([name, g]) => ({ name, x: g.x / g.n, y: g.y / g.n, n: g.n }))
+  })
 
   /** Live position of a node: a drag override if any, else the layout slot. */
   function posOf(id: string): { x: number; y: number } {
@@ -532,6 +557,23 @@ export function RefineGraph(): JSX.Element {
                     )}
                   </For>
                 </defs>
+
+                {/* Faint category labels behind everything, at each cluster's centroid. */}
+                <g class="rg-clusters" aria-hidden="true">
+                  <For each={clusterLabels()}>
+                    {(c) => (
+                      <text
+                        class="rg-cluster-label"
+                        x={c.x}
+                        y={c.y}
+                        text-anchor="middle"
+                        style={{ "font-size": `${Math.min(34, 16 + c.n)}px` }}
+                      >
+                        {c.name}
+                      </text>
+                    )}
+                  </For>
+                </g>
 
                 {/* Edges (drawn first so nodes sit on top). */}
                 <g class="rg-edges">

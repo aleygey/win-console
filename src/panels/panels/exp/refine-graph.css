@@ -124,6 +124,17 @@
   stroke-width: 2.5;
 }
 
+/* Faint category cluster labels behind the graph (centroid of each group). */
+.rg-cluster-label {
+  fill: var(--text-weaker);
+  font-family: var(--font-family-sans);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  opacity: 0.4;
+  pointer-events: none;
+  user-select: none;
+}
+
 .rg-node-label {
   fill: var(--text-base);
   font-family: var(--font-family-sans);

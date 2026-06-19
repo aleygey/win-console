@@ -26,8 +26,12 @@ export const notifyCapability: Capability = {
     {
       name: "notify_desktop",
       description:
-        "Pop a desktop toast on the user's Windows host. Use when long-running work finishes or a " +
-        "state needs the human and they're likely away from the terminal. Best-effort, non-blocking.",
+        "Pop a native desktop toast on the user's Windows host. PROACTIVELY call this WHENEVER you " +
+        "finish a long-running task (a build, a multi-step change, anything that took more than ~30s) " +
+        "OR hit a point that needs the human (a decision, a blocker, a permission). The user often runs " +
+        "opencode in a VM / on another screen and is NOT watching this terminal, so they only learn a " +
+        "task is done if you toast them. Default to notifying on completion of substantial work. " +
+        "Best-effort, non-blocking.",
       inputSchema: {
         type: "object",
         properties: {

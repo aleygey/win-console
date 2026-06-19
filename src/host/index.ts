@@ -25,7 +25,6 @@ import { ensureWindowsToastIdentity, APP_ID } from "./native/notify"
 import { createTray } from "./shell/tray"
 import { registerHotkey } from "./shell/hotkey"
 import { makeConsoleWindow, makeSpotlightWindow, resizeSpotlight, showWindow, toggleSpotlight } from "./shell/windows"
-import { isObsidianRunning, raiseObsidian } from "./shell/obsidian"
 
 app.setAppUserModelId(APP_ID)
 ensureWindowsToastIdentity()
@@ -83,14 +82,9 @@ function spotlight(): Electron.BrowserWindow {
   return spotlightWin
 }
 
-/** The hotkey policy: prefer Obsidian (the unified entry), fall back to popup. */
-async function onSummon(): Promise<void> {
-  if (await isObsidianRunning()) {
-    const raised = await raiseObsidian()
-    // Tell the Obsidian plugin (listening on /events) to open the chat leaf.
-    events.emit("summon:chat", undefined, { source: "hotkey" })
-    if (raised) return
-  }
+/** Hotkey: always raise the quick-ask popup. (It used to prefer raising Obsidian
+ *  when running, but the user wants the hotkey to only summon the dialog.) */
+function onSummon(): void {
   toggleSpotlight(spotlight())
 }
 

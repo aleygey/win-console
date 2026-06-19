@@ -91,7 +91,11 @@ function ChatPanel() {
   }
 
   let logEl: HTMLDivElement | undefined
-  const scrollDown = () => queueMicrotask(() => logEl?.scrollTo({ top: logEl.scrollHeight, behavior: "smooth" }))
+  const scrollDown = (smooth = true) =>
+    queueMicrotask(() => logEl?.scrollTo({ top: logEl.scrollHeight, behavior: smooth ? "smooth" : "auto" }))
+  // Opening a session should land at the END instantly, not animate down through
+  // the whole history. rAF so the markdown has laid out before we jump.
+  const jumpToEnd = () => requestAnimationFrame(() => requestAnimationFrame(() => { if (logEl) logEl.scrollTop = logEl.scrollHeight }))
 
   const refreshSessions = async () => {
     try {
@@ -110,7 +114,7 @@ function ChatPanel() {
     } catch {
       setMsgs([])
     }
-    scrollDown()
+    jumpToEnd()
   }
 
   onMount(async () => {

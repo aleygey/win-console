@@ -53,8 +53,8 @@ body,
   background: transparent;
   resize: none;
   font-family: inherit;
-  font-size: 15px;
-  line-height: 1.4;
+  font-size: 14px;
+  line-height: 1.5;
   color: var(--text-strong);
   /* override app.css's textarea{min-height:76px} — this is a single-line bar that
      autoGrow()s up to max-height as you type. */
@@ -197,7 +197,7 @@ body,
 }
 .qa-bubble {
   max-width: 82%;
-  font-size: 13.5px;
+  font-size: 14px;
   line-height: 1.5;
   padding: 7px 10px;
   border-radius: 11px;

@@ -17,7 +17,7 @@ const selfArg = (port: number) => [`--winhost-url=http://127.0.0.1:${port}`]
 /** Spotlight popup geometry. The window is OPAQUE + frameless and resizes to hug
  *  the card's content (transparent windows need the GPU, which we disable for the
  *  no-GPU 工位 fix — so an opaque window that grows is what works everywhere). */
-export const SPOTLIGHT_WIDTH = 560
+export const SPOTLIGHT_WIDTH = 660
 export const SPOTLIGHT_COLLAPSED_H = 58
 
 export function makeConsoleWindow(port: number): BrowserWindow {
@@ -91,25 +91,22 @@ export function toggleSpotlight(win: BrowserWindow): void {
   if (win.isVisible()) {
     win.hide()
   } else {
-    positionSpotlightAtCursor(win)
+    positionSpotlightCentered(win)
     win.show()
     win.focus()
     win.webContents.send("spotlight:shown")
   }
 }
 
-/** Place the popup near the mouse cursor, clamped to the current display's work
- *  area so it never spills off-screen. Called each time the hotkey shows it. */
-export function positionSpotlightAtCursor(win: BrowserWindow): void {
-  const pt = screen.getCursorScreenPoint()
-  const wa = screen.getDisplayNearestPoint(pt).workArea
-  const [w, h] = win.getSize()
-  // Offset a touch up-left so the input bar sits right under the cursor.
-  let x = pt.x - 44
-  let y = pt.y - 14
-  x = Math.max(wa.x, Math.min(x, wa.x + wa.width - w))
-  y = Math.max(wa.y, Math.min(y, wa.y + wa.height - h))
-  win.setPosition(Math.round(x), Math.round(y))
+/** Center the popup horizontally, upper-third vertically (Spotlight-style), on
+ *  the display the cursor is on — a fixed, predictable spot (the user can drag it
+ *  from there). Leaves room below for the answer to grow into. */
+export function positionSpotlightCentered(win: BrowserWindow): void {
+  const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea
+  const [w] = win.getSize()
+  const x = Math.round(wa.x + (wa.width - w) / 2)
+  const y = Math.round(wa.y + wa.height * 0.22)
+  win.setPosition(x, y)
 }
 
 /** Grow/shrink the popup as the answer expands, keeping the bar anchored where it

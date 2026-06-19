@@ -26,6 +26,13 @@ export const chatCapability: Capability = {
       handler: async (req, ctx) => ({ body: await ctx.native.chat.send((req.body ?? {}) as ChatSendReq) }),
     },
     {
+      method: "POST",
+      path: "/create",
+      handler: async (req, ctx) => ({
+        body: await ctx.native.chat.createSession((req.body as { directory?: string })?.directory),
+      }),
+    },
+    {
       method: "GET",
       path: "/sessions",
       handler: async (_req, ctx) => ({ body: { ok: true, sessions: await ctx.native.chat.sessions() } }),

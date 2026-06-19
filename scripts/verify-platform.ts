@@ -36,6 +36,7 @@ const native: NativeHost = {
   clipboardImage: async () => null,
   chat: {
     send: async (req) => ({ ok: true, reply: `echo: ${req.text}`, sessionId: "verify" }),
+    createSession: async () => ({ ok: true, sessionId: "verify" }),
     reset: () => {},
     sessions: async () => [],
     history: async () => [],

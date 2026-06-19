@@ -50,6 +50,8 @@ export function createWinHostClient(baseUrl: string, platform = "web"): WinHostC
 
     chat: {
       send: (req) => jpost<ChatSendRes>("/cap/chat/send", req),
+      createSession: (directory) =>
+        jpost<{ ok: boolean; sessionId?: string; error?: string }>("/cap/chat/create", { directory }),
       reset: (sessionId) => jpost<{ ok: boolean }>("/cap/chat/reset", { sessionId }),
       sessions: async () => (await jget<{ sessions: ChatSession[] }>("/cap/chat/sessions")).sessions ?? [],
       history: async (id) => (await jget<{ messages: ChatMsg[] }>(`/cap/chat/history?id=${encodeURIComponent(id)}`)).messages ?? [],

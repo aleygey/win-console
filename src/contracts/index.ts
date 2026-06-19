@@ -61,16 +61,34 @@ export type ChatSession = {
   updatedAt: number
 }
 
-/** A rendered message in a session's history. */
+/** Status of a tool invocation, mirrored from opencode's part state. */
+export type ChatToolStatus = "pending" | "running" | "completed" | "error"
+
+/** One structured slice of an assistant/user message — the building block that
+ *  lets the panel render a TUI-grade view (thinking, tool calls, errors), not
+ *  just the joined text. `kind` is ours (opencode calls it `type`). */
+export type ChatPart =
+  | { kind: "text"; text: string }
+  | { kind: "reasoning"; text: string }
+  | { kind: "tool"; tool: string; status: ChatToolStatus; input?: unknown; output?: string; error?: string; title?: string }
+  | { kind: "file"; mime: string; filename?: string }
+  | { kind: "error"; text: string }
+
+/** A rendered message in a session's history. `text` is the joined text (kept for
+ *  the spotlight + as a fallback); `parts` carries the full structured view. */
 export type ChatMsg = {
   role: "user" | "assistant" | "system"
   text: string
+  parts?: ChatPart[]
   at?: number
 }
 
 /** The full chat backend (opencode SDK), injected via NativeHost.chat. */
 export interface ChatBackend {
   send(req: ChatSendReq): Promise<ChatSendRes>
+  /** Create an empty session up front (so the panel can stream the very first
+   *  turn by polling its history while send() is in flight). */
+  createSession(directory?: string): Promise<{ ok: boolean; sessionId?: string; error?: string }>
   /** Forget local state for a session (or all if omitted). */
   reset(sessionId?: string): void
   sessions(): Promise<ChatSession[]>
@@ -427,6 +445,7 @@ export interface WinHostClient {
   // Typed conveniences over the built-in capabilities ──────────────────────────
   chat: {
     send(req: ChatSendReq): Promise<ChatSendRes>
+    createSession(directory?: string): Promise<{ ok: boolean; sessionId?: string; error?: string }>
     reset(sessionId?: string): Promise<{ ok: boolean }>
     sessions(): Promise<ChatSession[]>
     history(sessionId: string): Promise<ChatMsg[]>

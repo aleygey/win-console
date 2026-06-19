@@ -11,17 +11,131 @@
  * panel just mirrors it. The selected model + current session id persist in
  * localStorage so a reload restores where you were.
  */
-import { createMemo, createSignal, For, onMount, Show } from "solid-js"
+import { createMemo, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js"
 import { marked } from "marked"
 import { registerPanel } from "../../registry"
 import { api } from "../../bridge"
 import { Icon } from "../../icons"
 import { buildAttachmentPayload, readFiles, type Attachment } from "../../attach"
-import type { ChatMsg, ChatSession, ModelInfo, ModelRef } from "../../global"
+import type { ChatMsg, ChatPart, ChatToolStatus, ChatSession, ModelInfo, ModelRef } from "../../global"
 import "./chat.css"
 
 marked.setOptions({ gfm: true, breaks: true })
 const md = (t: string) => marked.parse(t, { async: false }) as string
+
+// ── TUI-grade message rendering ──────────────────────────────────────────────
+const TOOL_STATUS: Record<ChatToolStatus, { label: string; icon: string }> = {
+  pending: { label: "待运行", icon: "circle" },
+  running: { label: "运行中", icon: "activity" },
+  completed: { label: "完成", icon: "check" },
+  error: { label: "出错", icon: "alert-triangle" },
+}
+
+/** A one-line summary of a tool call pulled from whichever common input field is
+ *  present (path / command / pattern / url …) — what the TUI shows next to a tool. */
+function toolSummary(input: unknown): string {
+  if (!input || typeof input !== "object") return ""
+  const i = input as Record<string, unknown>
+  const pick =
+    i.filePath ?? i.path ?? i.command ?? i.pattern ?? i.query ?? i.url ?? i.description ?? i.prompt ?? i.title
+  return typeof pick === "string" ? pick : ""
+}
+function prettyInput(input: unknown): string {
+  if (input == null) return ""
+  if (typeof input === "string") return input
+  try {
+    return JSON.stringify(input, null, 2)
+  } catch {
+    return String(input)
+  }
+}
+function clip(s: string, n: number): string {
+  return s.length > n ? s.slice(0, n) + `\n… (+${s.length - n} 字符)` : s
+}
+
+function ToolCard(props: { p: Extract<ChatPart, { kind: "tool" }> }) {
+  const st = () => TOOL_STATUS[props.p.status]
+  const summary = createMemo(() => toolSummary(props.p.input))
+  const body = createMemo(() => props.p.error ?? props.p.output ?? "")
+  return (
+    <details class="tool-card" data-status={props.p.status}>
+      <summary>
+        <Icon name="terminal" size={13} />
+        <span class="tool-name">{props.p.tool}</span>
+        <Show when={summary()}>
+          <span class="tool-sum">{summary()}</span>
+        </Show>
+        <span class={`tool-badge ${props.p.status}`}>
+          <Icon name={st().icon} size={11} />
+          {st().label}
+        </span>
+      </summary>
+      <Show when={props.p.input != null}>
+        <pre class="tool-io">{clip(prettyInput(props.p.input), 2000)}</pre>
+      </Show>
+      <Show when={body()}>
+        <pre class={`tool-io ${props.p.error ? "err" : "out"}`}>{clip(body(), 4000)}</pre>
+      </Show>
+    </details>
+  )
+}
+
+function ReasoningCard(props: { text: string }) {
+  const preview = createMemo(() => props.text.replace(/\s+/g, " ").trim().slice(0, 72))
+  return (
+    <details class="reason-card">
+      <summary>
+        <Icon name="lightbulb" size={13} />
+        <span class="reason-label">思考</span>
+        <span class="reason-preview">{preview()}…</span>
+      </summary>
+      <div class="reason-body">{props.text}</div>
+    </details>
+  )
+}
+
+/** Render one message body — the structured parts if we have them (TUI view),
+ *  else the joined text as markdown (assistant) / plain (user, system). */
+function MsgBody(props: { m: ChatMsg }) {
+  const text = (t: string) =>
+    props.m.role === "assistant" ? (
+      // eslint-disable-next-line solid/no-innerhtml
+      <div class="markdown" innerHTML={md(t)} />
+    ) : (
+      <div class="plain">{t}</div>
+    )
+  return (
+    <Show when={props.m.parts && props.m.parts.length > 0} fallback={text(props.m.text)}>
+      <div class="parts">
+        <For each={props.m.parts}>
+          {(p) => (
+            <Switch>
+              <Match when={p.kind === "tool"}>
+                <ToolCard p={p as Extract<ChatPart, { kind: "tool" }>} />
+              </Match>
+              <Match when={p.kind === "reasoning"}>
+                <ReasoningCard text={(p as Extract<ChatPart, { kind: "reasoning" }>).text} />
+              </Match>
+              <Match when={p.kind === "error"}>
+                <div class="part-error">
+                  <Icon name="alert-triangle" size={14} />
+                  <span>{(p as Extract<ChatPart, { kind: "error" }>).text}</span>
+                </div>
+              </Match>
+              <Match when={p.kind === "file"}>
+                <span class="part-file">
+                  <Icon name="file-text" size={13} />
+                  {(p as Extract<ChatPart, { kind: "file" }>).filename ?? "附件"}
+                </span>
+              </Match>
+              <Match when={p.kind === "text"}>{text((p as Extract<ChatPart, { kind: "text" }>).text)}</Match>
+            </Switch>
+          )}
+        </For>
+      </div>
+    </Show>
+  )
+}
 
 const LS_SESSION = "winhost-chat-session"
 const LS_MODEL = "winhost-chat-model"
@@ -96,6 +210,35 @@ function ChatPanel() {
   // Opening a session should land at the END instantly, not animate down through
   // the whole history. rAF so the markdown has laid out before we jump.
   const jumpToEnd = () => requestAnimationFrame(() => requestAnimationFrame(() => { if (logEl) logEl.scrollTop = logEl.scrollHeight }))
+  // Only auto-follow the stream if the user is already near the bottom — never
+  // yank them upward while they're scrolled up reading earlier output.
+  const nearBottom = () => !logEl || logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 120
+
+  // Live updates: while a turn is in flight, poll the session's history so the
+  // panel mirrors the TUI (thinking, tool calls, mid-loop text) as it streams.
+  // opencode persists parts incrementally, so a plain poll of session.messages
+  // surfaces progress without any SSE relay.
+  let pollTimer: ReturnType<typeof setInterval> | undefined
+  const stopPoll = () => {
+    if (pollTimer) clearInterval(pollTimer)
+    pollTimer = undefined
+  }
+  const startPoll = (id: string) => {
+    stopPoll()
+    pollTimer = setInterval(async () => {
+      try {
+        const h = await api.chat.history(id)
+        if (h.length) {
+          const follow = nearBottom()
+          setMsgs(h)
+          if (follow) scrollDown(false)
+        }
+      } catch {
+        /* transient — keep polling */
+      }
+    }, 900)
+  }
+  onCleanup(stopPoll)
 
   const refreshSessions = async () => {
     try {
@@ -246,23 +389,56 @@ function ChatPanel() {
     setAttachments([])
     scrollDown()
 
-    // try/finally so a thrown send never leaves the spinner stuck.
+    // Get a session id up front (creating one if needed) so we can stream the
+    // FIRST turn too — opencode persists parts as they arrive, so polling its
+    // history mirrors the TUI live.
+    let id = activeId()
+    if (!id) {
+      const cr = await api.chat.createSession()
+      if (cr.ok && cr.sessionId) {
+        id = cr.sessionId
+        setActiveId(id)
+        localStorage.setItem(LS_SESSION, id)
+        void refreshSessions()
+      }
+    }
+    if (id) startPoll(id)
+
+    // try/finally so a thrown send never leaves the spinner / poll stuck.
     try {
-      const res = await api.chat.send({ text: text + textSuffix, files, sessionId: activeId(), model: model() })
+      const res = await api.chat.send({ text: text + textSuffix, files, sessionId: id, model: model() })
+      stopPoll()
       if (!res.ok) {
         setErr(res.error)
+        // pull whatever the server got before the failure, but never wipe the
+        // optimistic bubble if it has nothing.
+        if (id) {
+          const h = await api.chat.history(id).catch(() => [] as ChatMsg[])
+          if (h.length) setMsgs(h)
+        }
         setMsgs([...msgs(), { role: "system", text: `⚠ ${res.error ?? "发送失败"}` }])
       } else {
-        if (!activeId() && res.sessionId) {
-          setActiveId(res.sessionId)
-          localStorage.setItem(LS_SESSION, res.sessionId)
-          void refreshSessions()
+        const sid = id ?? res.sessionId
+        if (sid) {
+          if (!activeId()) {
+            setActiveId(sid)
+            localStorage.setItem(LS_SESSION, sid)
+            void refreshSessions()
+          }
+          await loadHistory(sid) // authoritative rich history (TUI parts)
+        } else {
+          setMsgs([...msgs(), { role: "assistant", text: res.reply ?? "(空回复)" }])
         }
-        setMsgs([...msgs(), { role: "assistant", text: res.reply ?? "(空回复)" }])
       }
     } catch (e) {
+      stopPoll()
+      if (id) {
+        const h = await api.chat.history(id).catch(() => [] as ChatMsg[])
+        if (h.length) setMsgs(h)
+      }
       setMsgs([...msgs(), { role: "system", text: `⚠ ${e instanceof Error ? e.message : String(e)}` }])
     } finally {
+      stopPoll()
       setBusy(false)
       scrollDown()
     }
@@ -393,10 +569,7 @@ function ChatPanel() {
                     </Show>
                   </div>
                   <div class="bubble">
-                    <Show when={m.role === "assistant"} fallback={<div class="plain">{m.text}</div>}>
-                      {/* eslint-disable-next-line solid/no-innerhtml */}
-                      <div class="markdown" innerHTML={md(m.text)} />
-                    </Show>
+                    <MsgBody m={m} />
                   </div>
                 </div>
               )}

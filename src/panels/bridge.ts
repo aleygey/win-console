@@ -58,6 +58,7 @@ export const api: WinHostClient = {
   events: (cb: (e: HostEvent) => void) => client.events(cb),
   chat: {
     send: (r) => client.chat.send(r),
+    createSession: (dir) => client.chat.createSession(dir),
     reset: (k) => client.chat.reset(k),
     sessions: () => client.chat.sessions(),
     history: (id) => client.chat.history(id),

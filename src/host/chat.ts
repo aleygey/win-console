@@ -11,7 +11,7 @@
  * loosely typed (as any) and defensively read — runtime shape is what matters.
  */
 import { createOpencodeClient } from "@opencode-ai/sdk"
-import type { ChatBackend, ChatMsg, ChatSendReq, ChatSendRes, ChatSession, GlobalConfig, ModelInfo } from "../contracts"
+import type { ChatBackend, ChatMsg, ChatPart, ChatSendReq, ChatSendRes, ChatSession, GlobalConfig, ModelInfo } from "../contracts"
 
 type Client = ReturnType<typeof createOpencodeClient>
 
@@ -67,6 +67,17 @@ export function createChat(getConfig: () => GlobalConfig): ChatBackend {
     }
   }
 
+  async function createSession(directory?: string): Promise<{ ok: boolean; sessionId?: string; error?: string }> {
+    const url = getConfig().opencodeUrl
+    try {
+      const created = await c().session.create({ body: {}, query: dir(directory) })
+      if (created.error || !created.data) return { ok: false, error: describe(created.error) ?? "创建 session 失败" }
+      return { ok: true, sessionId: created.data.id as string }
+    } catch (e) {
+      return { ok: false, error: connectHint(e, url) }
+    }
+  }
+
   async function sessions(): Promise<ChatSession[]> {
     try {
       const res = await c().session.list({ query: dir() })
@@ -89,12 +100,19 @@ export function createChat(getConfig: () => GlobalConfig): ChatBackend {
       const res = await c().session.messages({ path: { id: sessionId }, query: dir() })
       const list = (res.data ?? []) as any[]
       return list
-        .map((m) => ({
-          role: (m.info?.role ?? "assistant") as ChatMsg["role"],
-          text: textOf(m.parts),
-          at: numAt(m.info?.time?.created),
-        }))
-        .filter((m) => m.text)
+        .map((m) => {
+          const parts = mapParts(m.parts)
+          const errText = describe(m.info?.error)
+          if (errText) parts.push({ kind: "error", text: errText })
+          return {
+            role: (m.info?.role ?? "assistant") as ChatMsg["role"],
+            text: textOf(m.parts),
+            parts,
+            at: numAt(m.info?.time?.created),
+          }
+        })
+        // keep any message that has SOMETHING to show (text, a tool call, an error…)
+        .filter((m) => (m.parts?.length ?? 0) > 0 || m.text)
     } catch {
       return []
     }
@@ -151,7 +169,53 @@ export function createChat(getConfig: () => GlobalConfig): ChatBackend {
     }
   }
 
-  return { send, reset: () => {}, sessions, history, models, undo, deleteSession }
+  return { send, createSession, reset: () => {}, sessions, history, models, undo, deleteSession }
+}
+
+/** Flatten an opencode message's parts into our display parts. Drops pure-noise
+ *  parts (step-start/step-finish/snapshot) and keeps text, reasoning (thinking),
+ *  tool calls (with their live state), and file attachments. File data URLs are
+ *  intentionally NOT carried — only a chip's worth of metadata — so polling the
+ *  history during a turn stays cheap. */
+function mapParts(parts: unknown): ChatPart[] {
+  const out: ChatPart[] = []
+  for (const p of (parts ?? []) as any[]) {
+    switch (p?.type) {
+      case "text":
+        if (typeof p.text === "string" && p.text.trim()) out.push({ kind: "text", text: p.text })
+        break
+      case "reasoning":
+        if (typeof p.text === "string" && p.text.trim()) out.push({ kind: "reasoning", text: p.text })
+        break
+      case "file":
+        out.push({ kind: "file", mime: String(p.mime ?? ""), filename: p.filename })
+        break
+      case "tool": {
+        const st = p.state ?? {}
+        const status = ["pending", "running", "completed", "error"].includes(st.status) ? st.status : "pending"
+        out.push({
+          kind: "tool",
+          tool: String(p.tool ?? "tool"),
+          status,
+          input: st.input,
+          output: typeof st.output === "string" ? st.output : st.output != null ? safeJson(st.output) : undefined,
+          error: typeof st.error === "string" ? st.error : st.error != null ? describe(st.error) : undefined,
+          title: typeof st.title === "string" && st.title ? st.title : undefined,
+        })
+        break
+      }
+      // step-start / step-finish / snapshot / patch / agent: skipped (noise / not displayed)
+    }
+  }
+  return out
+}
+
+function safeJson(v: unknown): string {
+  try {
+    return JSON.stringify(v)
+  } catch {
+    return String(v)
+  }
 }
 
 function textOf(parts: unknown): string {

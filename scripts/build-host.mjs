@@ -3,6 +3,7 @@
 // an ESM package) so Electron's CommonJS main can load it without interop pain.
 // Only `electron` stays external — the runtime provides it.
 import { build } from "esbuild"
+import { mkdirSync, writeFileSync } from "node:fs"
 
 const common = {
   bundle: true,
@@ -26,5 +27,12 @@ const mainOnly = {
 await build({ ...common, ...mainOnly, entryPoints: ["src/host/index.ts"], outfile: "out/host/index.js" })
 await build({ ...common, entryPoints: ["src/host/preload/console.ts"], outfile: "out/host/preload/console.js" })
 await build({ ...common, entryPoints: ["src/host/preload/spotlight.ts"], outfile: "out/host/preload/spotlight.js" })
+
+// The repo's root package.json is `"type": "module"`, but the bundles above are
+// CommonJS (they use require). Drop a scoped package.json so Node/Electron treat
+// everything under out/host as CommonJS — this makes `electron .` work in dev
+// (the packaged build relies on electron-builder's extraMetadata for the same).
+mkdirSync("out/host", { recursive: true })
+writeFileSync("out/host/package.json", JSON.stringify({ type: "commonjs" }, null, 2) + "\n")
 
 console.log("[build-host] daemon + preloads bundled -> out/host/")

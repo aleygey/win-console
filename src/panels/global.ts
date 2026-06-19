@@ -7,6 +7,8 @@ export type {
   ChatSendReq,
   ChatSendRes,
   ChatMsg,
+  ChatPart,
+  ChatToolStatus,
   ChatSession,
   ModelInfo,
   ModelRef,

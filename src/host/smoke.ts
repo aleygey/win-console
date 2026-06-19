@@ -43,6 +43,7 @@ const stubNative: NativeHost = {
   clipboardImage: async () => null,
   chat: {
     send: async (req) => ({ ok: true, reply: `echo: ${req.text}`, sessionId: "smoke" }),
+    createSession: async () => ({ ok: true, sessionId: "smoke" }),
     reset: () => {},
     sessions: async () => [],
     history: async () => [],

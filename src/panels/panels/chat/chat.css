@@ -588,3 +588,186 @@
   cursor: pointer;
   padding: 0;
 }
+
+/* ── TUI-grade message parts (thinking / tool calls / errors / files) ───────── */
+/* Assistant messages that carry structured parts get more room than a plain
+   reply — tool I/O needs the width. */
+.row-msg.assistant .bubble:has(.parts) {
+  max-width: 92%;
+}
+.parts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.parts > .markdown:not(:last-child) {
+  margin-bottom: 2px;
+}
+
+/* reasoning (thinking) — a quiet collapsible block, closed by default with a
+   one-line peek so it never dominates the reply. */
+.reason-card {
+  border: 1px dashed var(--border-weak-base);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken, var(--surface-weak));
+}
+.reason-card > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--font-size-small);
+  color: var(--text-weak);
+}
+.reason-card > summary::-webkit-details-marker {
+  display: none;
+}
+.reason-label {
+  font-weight: 600;
+  color: var(--text-base);
+}
+.reason-preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.8;
+}
+.reason-card[open] .reason-preview {
+  display: none;
+}
+.reason-body {
+  padding: 2px 11px 9px;
+  font-size: var(--font-size-small);
+  line-height: 1.6;
+  color: var(--text-base);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* tool call — collapsible card: name + one-line summary + status badge, and the
+   input / output revealed on expand. */
+.tool-card {
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  background: var(--surface-weak);
+  overflow: hidden;
+}
+.tool-card > summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  cursor: pointer;
+  list-style: none;
+}
+.tool-card > summary::-webkit-details-marker {
+  display: none;
+}
+.tool-name {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-small);
+  font-weight: 600;
+  color: var(--text-strong);
+  flex: none;
+}
+.tool-sum {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  color: var(--text-weak);
+}
+.tool-badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+.tool-badge.pending {
+  background: var(--surface-base);
+  color: var(--text-weak);
+}
+.tool-badge.running {
+  background: var(--surface-interactive-weak, var(--surface-info-weak));
+  color: var(--text-interactive-base, var(--text-on-info-base));
+}
+.tool-badge.completed {
+  background: var(--surface-success-weak);
+  color: var(--text-on-success-base);
+}
+.tool-badge.error {
+  background: var(--surface-critical-weak);
+  color: var(--text-on-critical-base);
+}
+/* the running badge's icon gently pulses */
+.tool-card[data-status="running"] .tool-badge.running svg {
+  animation: tool-pulse 1.1s ease-in-out infinite;
+}
+@keyframes tool-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.tool-io {
+  margin: 0;
+  padding: 7px 10px;
+  border-top: 1px solid var(--border-weaker-base, var(--border-weak-base));
+  background: var(--background-weak);
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-base);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 280px;
+  overflow: auto;
+}
+.tool-io.err {
+  color: var(--text-on-critical-base);
+  background: var(--surface-critical-weak);
+}
+
+/* message-level / mid-loop error row */
+.part-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 7px 10px;
+  border-radius: var(--radius-md);
+  background: var(--surface-critical-weak);
+  color: var(--text-on-critical-base);
+  font-size: var(--font-size-small);
+  line-height: 1.5;
+  word-break: break-word;
+}
+.part-error svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+/* file attachment chip inside a message */
+.part-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  align-self: flex-start;
+  font-size: var(--font-size-small);
+  color: var(--text-base);
+  background: var(--surface-base);
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  padding: 3px 8px;
+}

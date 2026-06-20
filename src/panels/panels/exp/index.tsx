@@ -24,6 +24,7 @@ import { RefineList } from "./refine-list"
 import { RefineGraph } from "./refine-graph"
 import { RefineLog } from "./refine-log"
 import { Retrieve } from "./retrieve"
+import { ColdStart } from "./cold-start"
 import "./exp.css"
 
 /**
@@ -148,7 +149,7 @@ function RefineModel(): JSX.Element {
   )
 }
 
-type TabId = "list" | "graph" | "logs" | "retrieve"
+type TabId = "list" | "graph" | "logs" | "retrieve" | "coldstart"
 
 type TabDef = { id: TabId; label: string }
 
@@ -157,6 +158,7 @@ const TABS: TabDef[] = [
   { id: "graph", label: "关系图谱" },
   { id: "logs", label: "整理日志" },
   { id: "retrieve", label: "召回" },
+  { id: "coldstart", label: "冷启动" },
 ]
 
 export function ExpPanel(): JSX.Element {
@@ -201,6 +203,9 @@ export function ExpPanel(): JSX.Element {
           </Match>
           <Match when={tab() === "retrieve"}>
             <Retrieve />
+          </Match>
+          <Match when={tab() === "coldstart"}>
+            <ColdStart />
           </Match>
         </Switch>
       </div>

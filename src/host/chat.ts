@@ -105,6 +105,7 @@ export function createChat(getConfig: () => GlobalConfig): ChatBackend {
           const errText = describe(m.info?.error)
           if (errText) parts.push({ kind: "error", text: errText })
           return {
+            id: m.info?.id as string | undefined,
             role: (m.info?.role ?? "assistant") as ChatMsg["role"],
             text: textOf(m.parts),
             parts,

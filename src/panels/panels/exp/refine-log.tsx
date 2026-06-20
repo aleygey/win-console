@@ -242,8 +242,134 @@ export function RefineLog(): JSX.Element {
     <div class="rl-root">
       <ActivityLog />
       <GlobalReview />
+      <SkillCandidates />
       <ExpPeek />
     </div>
+  )
+}
+
+/* ──────────────────────────────────────────────────────
+   Skill candidates — auto-propose cohesive exp clusters
+   worth promoting to a skill (GET /refiner/skill-candidates),
+   then promote on confirm (POST /refiner/skill).
+   ────────────────────────────────────────────────────── */
+
+type SkillCandidate = {
+  ids: string[]
+  titles: string[]
+  member_count: number
+  cited_total: number
+  stable: boolean
+  kinds: string[]
+  suggested_name: string
+  score: number
+  reason: string
+}
+type SkillCandidatesResponse = { ok: true; candidates: SkillCandidate[]; stats: { experiences: number; eligible: number; clusters: number } }
+
+function SkillCandidates(): JSX.Element {
+  const client = useExpClient()
+  const [scanning, setScanning] = createSignal(false)
+  const [err, setErr] = createSignal<string | undefined>()
+  const [resp, setResp] = createSignal<SkillCandidatesResponse | undefined>()
+  const [names, setNames] = createSignal<Record<number, string>>({})
+  const [promoting, setPromoting] = createSignal<number | undefined>()
+  const [done, setDone] = createSignal<Record<number, string>>({}) // index → skill path
+
+  async function scan() {
+    setScanning(true)
+    setErr(undefined)
+    setDone({})
+    try {
+      const r = await client.get<SkillCandidatesResponse>("/refiner/skill-candidates?min_cited=0&min_size=2")
+      setResp(r)
+      const seed: Record<number, string> = {}
+      r.candidates.forEach((c, i) => (seed[i] = c.suggested_name))
+      setNames(seed)
+    } catch (e) {
+      setErr(`扫描失败:${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setScanning(false)
+    }
+  }
+
+  async function promote(i: number, c: SkillCandidate) {
+    setPromoting(i)
+    setErr(undefined)
+    try {
+      const r = await client.post<{ ok?: boolean; path?: string; error?: string }>("/refiner/skill", {
+        ids: c.ids,
+        name: names()[i] || c.suggested_name,
+      })
+      if (r.error) setErr(`提升失败:${r.error}`)
+      else if (r.path) setDone((d) => ({ ...d, [i]: r.path! }))
+    } catch (e) {
+      setErr(`提升失败:${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setPromoting(undefined)
+    }
+  }
+
+  return (
+    <section class="rl-section sk-sec">
+      <div class="rl-section-head">
+        <h2 class="rl-section-title">Skill 候选</h2>
+        <button class="rl-global-btn" disabled={scanning()} onClick={() => void scan()}>
+          {scanning() ? "扫描中…" : "扫描 skill 候选"}
+        </button>
+      </div>
+      <p class="sk-hint">
+        把<b>反复一起被采用、近期稳定</b>的经验簇提升为 opencode skill(写入 .opencode/skills/)。提升后这些经验不再每轮注入 baseline,改由 skill 按需加载。
+      </p>
+
+      <Show when={err()}>
+        <div class="sk-err">{err()}</div>
+      </Show>
+
+      <Show when={resp()}>
+        <Show
+          when={resp()!.candidates.length > 0}
+          fallback={<div class="sk-empty">没有合适的簇可提升(经验 {resp()!.stats.eligible} 条,需 ≥2 条相关且有采用记录)。</div>}
+        >
+          <div class="sk-list">
+            <For each={resp()!.candidates}>
+              {(c, i) => (
+                <div class="sk-card">
+                  <div class="sk-card-top">
+                    <span class="sk-badge">{c.member_count} 条</span>
+                    <span class="sk-badge" title="judge 共采用次数">✓ {c.cited_total}</span>
+                    <Show when={c.stable}>
+                      <span class="sk-badge sk-ok">稳定</span>
+                    </Show>
+                    <span class="sk-kinds">{c.kinds.join(" · ")}</span>
+                  </div>
+                  <ul class="sk-titles">
+                    <For each={c.titles}>{(t) => <li>{t}</li>}</For>
+                  </ul>
+                  <div class="sk-reason">{c.reason}</div>
+                  <Show
+                    when={!done()[i()]}
+                    fallback={<div class="sk-done">已生成 → {done()[i()]}(源经验已移出 baseline)</div>}
+                  >
+                    <div class="sk-actions">
+                      <input
+                        class="sk-name"
+                        placeholder="skill 名(kebab-case)"
+                        value={names()[i()] ?? c.suggested_name}
+                        onInput={(e) => setNames((n) => ({ ...n, [i()]: e.currentTarget.value }))}
+                      />
+                      <button class="sk-promote" disabled={promoting() === i()} onClick={() => void promote(i(), c)}>
+                        {promoting() === i() ? "生成中…" : "提升为 skill"}
+                      </button>
+                    </div>
+                  </Show>
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
+      </Show>
+    </section>
   )
 }
 

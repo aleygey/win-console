@@ -77,6 +77,9 @@ export type ChatPart =
 /** A rendered message in a session's history. `text` is the joined text (kept for
  *  the spotlight + as a fallback); `parts` carries the full structured view. */
 export type ChatMsg = {
+  /** opencode message id (so callers like cold-start distill can reference the
+   *  exact source message). Absent for locally-synthesized rows. */
+  id?: string
   role: "user" | "assistant" | "system"
   text: string
   parts?: ChatPart[]

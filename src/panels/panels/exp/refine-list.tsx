@@ -135,6 +135,15 @@ type RefinerOverview = {
   graph?: unknown
 }
 
+/** Per-experience usage counters from `GET /usage` (= /refiner/stats):
+ *  how often each exp was injected (by tier), cited by the judge, or recalled
+ *  by the recall_experience tool. Keyed by experience id. */
+type ExpUsage = {
+  injected?: { total?: number; by_tier?: { baseline?: number; topical?: number; recall?: number }; last_at?: number }
+  used?: { cited?: number; recalled?: number; last_at?: number }
+}
+type UsageMap = Record<string, ExpUsage>
+
 /* ──────────────────────────────────────────────────────
    Kind palette + labels. Hues come from the shared design
    tokens (--kind-*), a desaturated set that themes with the
@@ -270,6 +279,18 @@ export function RefineList(): JSX.Element {
     const overview = await client.get<RefinerOverview>("/refiner/overview?limit=5000")
     return readExperiences(overview)
   })
+
+  // Per-experience usage counters (judge-cited / recalled / injected-by-tier).
+  // Served at /usage; the overview payload itself carries no usage fields, so we
+  // fetch it separately and join by id. Empty object on failure = no chips shown.
+  const [usage] = createResource<UsageMap>(async () => {
+    try {
+      return await client.get<UsageMap>("/usage")
+    } catch {
+      return {}
+    }
+  })
+  const usageFor = (id: string): ExpUsage | undefined => usage()?.[id]
 
   // Category filter — two-level tabs. `top` selects a first-level tag (or null =
   // 全部); `sub` selects one full "top/sub" value under it (or null = all of top).
@@ -536,7 +557,7 @@ export function RefineList(): JSX.Element {
               fallback={
                 <div class="rl-grid">
                   <For each={experiences()}>
-                    {(exp) => <ExperienceCard exp={exp} onOpen={() => setSelected(exp)} />}
+                    {(exp) => <ExperienceCard exp={exp} usage={usageFor(exp.id)} onOpen={() => setSelected(exp)} />}
                   </For>
                 </div>
               }
@@ -552,7 +573,7 @@ export function RefineList(): JSX.Element {
                       </div>
                       <div class="rl-grid-inner">
                         <For each={s.items}>
-                          {(exp) => <ExperienceCard exp={exp} onOpen={() => setSelected(exp)} />}
+                          {(exp) => <ExperienceCard exp={exp} usage={usageFor(exp.id)} onOpen={() => setSelected(exp)} />}
                         </For>
                       </div>
                     </section>
@@ -568,6 +589,7 @@ export function RefineList(): JSX.Element {
         {(exp) => (
           <DetailModal
             exp={exp()}
+            usage={usageFor(exp().id)}
             onClose={() => setSelected(null)}
             onMutated={reloadAndSync}
           />
@@ -581,9 +603,11 @@ export function RefineList(): JSX.Element {
    Card
    ────────────────────────────────────────────────────── */
 
-function ExperienceCard(props: { exp: Experience; onOpen: () => void }): JSX.Element {
+function ExperienceCard(props: { exp: Experience; usage?: ExpUsage; onOpen: () => void }): JSX.Element {
   const e = () => props.exp
   const obsCount = () => e().observations?.length ?? 0
+  const cited = () => props.usage?.used?.cited ?? 0
+  const recalled = () => props.usage?.used?.recalled ?? 0
   const flag = () => {
     const s = e().review_status
     return s === "pending" || s === "rejected" ? s : undefined
@@ -620,11 +644,21 @@ function ExperienceCard(props: { exp: Experience; onOpen: () => void }): JSX.Ele
         <p class="rl-card-abstract">{e().abstract}</p>
       </Show>
 
-      {/* footer — obs · (scope) · time, quiet mono */}
+      {/* footer — obs · usage · (scope) · time, quiet mono */}
       <div class="rl-card-meta">
         <span class="rl-meta-item">
           <b>{obsCount()}</b> obs
         </span>
+        <Show when={cited() > 0}>
+          <span class="rl-meta-item rl-use" title="judge 判定被采用的次数">
+            ✓<b>{cited()}</b>
+          </span>
+        </Show>
+        <Show when={recalled() > 0}>
+          <span class="rl-meta-item rl-use" title="被 recall 工具召回的次数">
+            ⤴<b>{recalled()}</b>
+          </span>
+        </Show>
         <span class="rl-spacer" />
         <Show when={e().scope && e().scope !== "workspace"}>
           <span class="rl-foot-scope">{SCOPE_LABEL[e().scope] ?? e().scope}</span>
@@ -643,11 +677,13 @@ function ExperienceCard(props: { exp: Experience; onOpen: () => void }): JSX.Ele
 
 function DetailModal(props: {
   exp: Experience
+  usage?: ExpUsage
   onClose: () => void
   onMutated: () => void | Promise<void>
 }): JSX.Element {
   const client = useExpClient()
   const e = () => props.exp
+  const u = () => props.usage
 
   const [busy, setBusy] = createSignal<string | null>(null)
   const [err, setErr] = createSignal<string | null>(null)
@@ -866,6 +902,28 @@ function DetailModal(props: {
                       <dd>{fmtDateTime(e().created_at)}</dd>
                       <dt>最近整理</dt>
                       <dd>{fmtDateTime(e().last_refined_at)}</dd>
+                      {/* usage — judge-cited / recalled / injected (by tier) */}
+                      <Show when={u()}>
+                        <dt>被采用 (judge)</dt>
+                        <dd>{u()!.used?.cited ?? 0} 次</dd>
+                        <dt>被召回</dt>
+                        <dd>{u()!.used?.recalled ?? 0} 次</dd>
+                        <dt>注入次数</dt>
+                        <dd>
+                          {u()!.injected?.total ?? 0}
+                          <Show when={u()!.injected?.by_tier}>
+                            {(t) => (
+                              <span class="rl-kv-sub">
+                                （baseline {t().baseline ?? 0} · topical {t().topical ?? 0} · recall {t().recall ?? 0}）
+                              </span>
+                            )}
+                          </Show>
+                        </dd>
+                        <Show when={(u()!.used?.last_at ?? 0) > 0}>
+                          <dt>最近使用</dt>
+                          <dd>{fmtDateTime(u()!.used!.last_at!)}</dd>
+                        </Show>
+                      </Show>
                       <Show
                         when={
                           e().related_experience_ids && e().related_experience_ids.length > 0

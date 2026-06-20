@@ -185,3 +185,253 @@
   overflow: auto;
   padding: calc(var(--spacing) * 5);
 }
+
+/* ── Cold-start (冷启动) ──────────────────────────────────────────────────── */
+.cs {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+}
+.cs-hint {
+  font-size: var(--font-size-small);
+  color: var(--text-weak);
+  line-height: 1.6;
+}
+.cs-hint b {
+  color: var(--text-base);
+  font-family: var(--font-family-mono);
+}
+.cs-cols {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 220px 1fr 280px;
+  gap: 12px;
+}
+.cs-sessions,
+.cs-queries,
+.cs-basket {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  background: var(--surface-base);
+  overflow: hidden;
+}
+.cs-search {
+  margin: 8px;
+  padding: 5px 8px;
+  font-size: var(--font-size-small);
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  background: var(--surface-inset-base);
+  color: var(--text-strong);
+}
+.cs-search:focus {
+  outline: none;
+  box-shadow: var(--ring);
+}
+.cs-session-list,
+.cs-queries,
+.cs-basket-list {
+  overflow-y: auto;
+}
+.cs-session {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-bottom: 1px solid var(--border-weaker-base, var(--border-weak-base));
+  background: transparent;
+  padding: 8px 10px;
+  cursor: pointer;
+  color: var(--text-base);
+}
+.cs-session:hover {
+  background: var(--button-ghost-hover);
+}
+.cs-session[data-active="true"] {
+  background: var(--surface-interactive-weak, var(--surface-weak));
+  color: var(--text-interactive-base, var(--text-strong));
+}
+.cs-session-title {
+  display: block;
+  font-size: var(--font-size-small);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cs-queries {
+  padding: 6px;
+  gap: 5px;
+}
+.cs-q {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--font-size-small);
+  line-height: 1.5;
+}
+.cs-q:hover {
+  background: var(--button-ghost-hover);
+}
+.cs-q[data-picked="true"] {
+  background: var(--surface-interactive-weak, var(--surface-weak));
+}
+.cs-q[data-done="true"] {
+  opacity: 0.5;
+}
+.cs-q input {
+  margin-top: 3px;
+  flex: none;
+}
+.cs-q-text {
+  flex: 1;
+  color: var(--text-base);
+  word-break: break-word;
+}
+.cs-q-done {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-weaker);
+  white-space: nowrap;
+}
+.cs-basket {
+  padding: 10px;
+  gap: 8px;
+}
+.cs-basket-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: var(--font-size-small);
+  color: var(--text-weak);
+}
+.cs-basket-head b {
+  color: var(--text-strong);
+}
+.cs-basket-list {
+  flex: 1 1 auto;
+  min-height: 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.cs-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 7px;
+  background: var(--surface-weak);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+}
+.cs-chip-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-base);
+}
+.cs-chip button,
+.cs-link {
+  border: 0;
+  background: transparent;
+  color: var(--icon-base);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+}
+.cs-run {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.cs-mode {
+  display: flex;
+  gap: 4px;
+}
+.cs-mode-btn {
+  flex: 1;
+  font-size: 11px;
+  padding: 5px 4px;
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  background: var(--surface-base);
+  color: var(--text-weak);
+  cursor: pointer;
+}
+.cs-mode-btn[data-on="true"] {
+  border-color: var(--cobalt-9);
+  background: var(--cobalt-9);
+  color: #fff;
+}
+.cs-go {
+  padding: 7px 12px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--cobalt-9);
+  color: #fff;
+  cursor: pointer;
+  font-size: var(--font-size-small);
+}
+.cs-go:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.cs-err {
+  font-size: var(--font-size-small);
+  color: var(--text-on-critical-base);
+  background: var(--surface-critical-weak);
+  border-radius: var(--radius-md);
+  padding: 6px 8px;
+}
+.cs-results {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  overflow-y: auto;
+}
+.cs-results-head {
+  font-size: var(--font-size-small);
+  color: var(--text-weak);
+}
+.cs-result {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 12px;
+}
+.cs-result-badge {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--surface-weak);
+  color: var(--text-base);
+}
+.cs-result[data-outcome="new_exp"] .cs-result-badge {
+  background: var(--surface-success-weak);
+  color: var(--text-on-success-base);
+}
+.cs-result[data-outcome="error"] .cs-result-badge {
+  background: var(--surface-critical-weak);
+  color: var(--text-on-critical-base);
+}
+.cs-result-reason {
+  color: var(--text-weak);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cs-empty {
+  padding: 16px 12px;
+  font-size: var(--font-size-small);
+  color: var(--text-weaker);
+  text-align: center;
+}

@@ -944,3 +944,116 @@
 .rl-skipped-reason {
   color: var(--text-weak);
 }
+
+/* ── Skill candidates ─────────────────────────────────────────────────────── */
+.sk-sec {
+  margin-top: calc(var(--spacing) * 6);
+}
+.sk-hint {
+  margin: 6px 0 12px;
+  font-size: var(--font-size-small);
+  color: var(--text-weak);
+  line-height: 1.6;
+}
+.sk-hint b {
+  color: var(--text-base);
+}
+.sk-err {
+  margin-bottom: 10px;
+  font-size: var(--font-size-small);
+  color: var(--text-on-critical-base);
+  background: var(--surface-critical-weak);
+  border-radius: var(--radius-md);
+  padding: 6px 9px;
+}
+.sk-empty {
+  font-size: var(--font-size-small);
+  color: var(--text-weaker);
+  padding: 8px 0;
+}
+.sk-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sk-card {
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  background: var(--surface-base);
+  padding: 11px 13px;
+}
+.sk-card-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.sk-badge {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--surface-weak);
+  color: var(--text-base);
+  white-space: nowrap;
+}
+.sk-badge.sk-ok {
+  background: var(--surface-success-weak);
+  color: var(--text-on-success-base);
+}
+.sk-kinds {
+  font-size: 11px;
+  color: var(--text-weaker);
+  font-family: var(--font-family-mono);
+}
+.sk-titles {
+  margin: 8px 0 6px;
+  padding-left: 18px;
+  font-size: var(--font-size-small);
+  color: var(--text-base);
+  line-height: 1.6;
+}
+.sk-reason {
+  font-size: 12px;
+  color: var(--text-weak);
+  margin-bottom: 9px;
+}
+.sk-actions {
+  display: flex;
+  gap: 8px;
+}
+.sk-name {
+  flex: 1;
+  font-size: var(--font-size-small);
+  padding: 5px 9px;
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  background: var(--surface-inset-base);
+  color: var(--text-strong);
+  font-family: var(--font-family-mono);
+}
+.sk-name:focus {
+  outline: none;
+  box-shadow: var(--ring);
+}
+.sk-promote {
+  flex: none;
+  font-size: var(--font-size-small);
+  padding: 5px 14px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--cobalt-9);
+  color: #fff;
+  cursor: pointer;
+}
+.sk-promote:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.sk-done {
+  font-size: var(--font-size-small);
+  color: var(--text-on-success-base);
+  background: var(--surface-success-weak);
+  border-radius: var(--radius-md);
+  padding: 6px 9px;
+  word-break: break-all;
+}

@@ -23,6 +23,7 @@
 import {
   createResource,
   createSignal,
+  createMemo,
   For,
   Show,
   Switch,
@@ -141,6 +142,14 @@ type RefinerOverview = {
 type ExpUsage = {
   injected?: { total?: number; by_tier?: { baseline?: number; topical?: number; recall?: number }; last_at?: number }
   used?: { cited?: number; recalled?: number; last_at?: number }
+  // Phase-1 judge observation (recorded only)
+  ignored?: number
+  not_relevant?: number
+  bad?: number
+  last_applied_at?: number
+  last_bad_at?: number
+  workflow?: Record<string, { applied?: number; ignored?: number }>
+  co_injected?: Record<string, number>
 }
 type UsageMap = Record<string, ExpUsage>
 
@@ -291,6 +300,13 @@ export function RefineList(): JSX.Element {
     }
   })
   const usageFor = (id: string): ExpUsage | undefined => usage()?.[id]
+  // id → title lookup (for co-injection display in the detail modal).
+  const titleIndex = createMemo(() => {
+    const m = new Map<string, string>()
+    for (const e of data() ?? []) m.set(e.id, e.title)
+    return m
+  })
+  const titleById = (id: string): string | undefined => titleIndex().get(id)
 
   // Category filter — two-level tabs. `top` selects a first-level tag (or null =
   // 全部); `sub` selects one full "top/sub" value under it (or null = all of top).
@@ -590,6 +606,7 @@ export function RefineList(): JSX.Element {
           <DetailModal
             exp={exp()}
             usage={usageFor(exp().id)}
+            titleById={titleById}
             onClose={() => setSelected(null)}
             onMutated={reloadAndSync}
           />
@@ -678,12 +695,24 @@ function ExperienceCard(props: { exp: Experience; usage?: ExpUsage; onOpen: () =
 function DetailModal(props: {
   exp: Experience
   usage?: ExpUsage
+  titleById?: (id: string) => string | undefined
   onClose: () => void
   onMutated: () => void | Promise<void>
 }): JSX.Element {
   const client = useExpClient()
   const e = () => props.exp
   const u = () => props.usage
+  // Top co-injected experiences (recalled together for the same queries) — a
+  // manual merge hint. Sorted by count, capped.
+  const coInjected = () => {
+    const co = u()?.co_injected
+    if (!co) return [] as Array<{ id: string; title: string; count: number }>
+    return Object.entries(co)
+      .filter(([, n]) => (n ?? 0) > 0)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([id, count]) => ({ id, title: props.titleById?.(id) ?? id, count }))
+  }
 
   const [busy, setBusy] = createSignal<string | null>(null)
   const [err, setErr] = createSignal<string | null>(null)
@@ -919,9 +948,39 @@ function DetailModal(props: {
                             )}
                           </Show>
                         </dd>
-                        <Show when={(u()!.used?.last_at ?? 0) > 0}>
-                          <dt>最近使用</dt>
-                          <dd>{fmtDateTime(u()!.used!.last_at!)}</dd>
+                        <Show when={(u()!.ignored ?? 0) > 0}>
+                          <dt>被忽略</dt>
+                          <dd title="同主题却没被遵循">{u()!.ignored} 次</dd>
+                        </Show>
+                        <Show when={(u()!.not_relevant ?? 0) > 0}>
+                          <dt>判为无关</dt>
+                          <dd title="注入了但这轮没碰它的主题(召回偏宽)">{u()!.not_relevant} 次</dd>
+                        </Show>
+                        <Show when={(u()!.bad ?? 0) > 0}>
+                          <dt>出问题</dt>
+                          <dd class="rl-kv-bad">
+                            {u()!.bad} 次
+                            <Show when={(u()!.last_bad_at ?? 0) > 0}>
+                              <span class="rl-kv-sub">（最近 {fmtDateTime(u()!.last_bad_at!)}）</span>
+                            </Show>
+                          </dd>
+                        </Show>
+                        <Show when={(u()!.last_applied_at ?? 0) > 0}>
+                          <dt>最近采用</dt>
+                          <dd>{fmtDateTime(u()!.last_applied_at!)}</dd>
+                        </Show>
+                        <Show when={u()!.workflow && Object.keys(u()!.workflow!).length > 0}>
+                          <dt>各工作流采纳</dt>
+                          <dd>
+                            <For each={Object.entries(u()!.workflow!)}>
+                              {([wf, c]) => (
+                                <span class="rl-kv-wf">
+                                  {wf} <b>{c.applied ?? 0}</b>✓
+                                  <Show when={(c.ignored ?? 0) > 0}> / {c.ignored}✗</Show>
+                                </span>
+                              )}
+                            </For>
+                          </dd>
                         </Show>
                       </Show>
                       <Show
@@ -934,6 +993,24 @@ function DetailModal(props: {
                       </Show>
                     </dl>
                   </section>
+
+                  {/* Co-injection — experiences recalled together for the same
+                      queries; a manual merge hint. */}
+                  <Show when={coInjected().length > 0}>
+                    <section class="rl-sec">
+                      <span class="rl-sec-label">常一起召回 · 合并候选</span>
+                      <ul class="rl-coinj">
+                        <For each={coInjected()}>
+                          {(c) => (
+                            <li class="rl-coinj-item">
+                              <span class="rl-coinj-title">{c.title}</span>
+                              <span class="rl-coinj-n">×{c.count}</span>
+                            </li>
+                          )}
+                        </For>
+                      </ul>
+                    </section>
+                  </Show>
                 </>
               }
             >

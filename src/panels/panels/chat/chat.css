@@ -195,7 +195,12 @@
   gap: 4px;
   flex: none;
 }
-.chat-sessions-toggle {
+/* `.chat` prefix bumps specificity above the shared `.icon-btn { display:flex }`
+   (defined later in this file) — otherwise this slide-over button would also show
+   in WIDE mode, where it's a no-op (the rail is already visible) and looks like a
+   dead duplicate of the rail-collapse button. The @container narrow rule re-shows
+   it with !important. */
+.chat .chat-sessions-toggle {
   display: none; /* shown only when narrow (container query) */
 }
 

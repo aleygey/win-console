@@ -945,6 +945,120 @@
   color: var(--text-weak);
 }
 
+/* ── Judge log ────────────────────────────────────────────────────────────── */
+.jl-sec {
+  margin-top: calc(var(--spacing) * 6);
+}
+.jl-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: clamp(240px, 40vh, 480px);
+  overflow-y: auto;
+  margin-top: 8px;
+}
+.jl-run {
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  background: var(--surface-base);
+  overflow: hidden;
+}
+.jl-run-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.jl-run-hd:hover {
+  background: var(--button-ghost-hover);
+}
+.jl-caret {
+  flex: none;
+  color: var(--icon-base);
+  transition: transform 0.12s ease;
+}
+.jl-caret[data-open="true"] {
+  transform: rotate(90deg);
+}
+.jl-wf {
+  flex: none;
+  font-size: 12px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--surface-interactive-weak, var(--surface-weak));
+  color: var(--text-interactive-base, var(--text-base));
+}
+.jl-counts {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.jl-time {
+  flex: none;
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  color: var(--text-weaker);
+}
+.jl-badge {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--surface-weak);
+  color: var(--text-base);
+  white-space: nowrap;
+}
+.jl-badge.jl-applied {
+  background: var(--surface-success-weak);
+  color: var(--text-on-success-base);
+}
+.jl-badge.jl-bad {
+  background: var(--surface-critical-weak);
+  color: var(--text-on-critical-base);
+}
+.jl-badge.jl-ignored {
+  background: var(--surface-warning-weak);
+  color: var(--text-on-warning-base);
+}
+.jl-verdicts {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px 10px 9px;
+  border-top: 1px solid var(--border-weaker-base, var(--border-weak-base));
+}
+.jl-verdict {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+}
+.jl-vtitle {
+  color: var(--text-base);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jl-subtype {
+  flex: none;
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  color: var(--text-on-critical-base);
+}
+.jl-rationale {
+  color: var(--text-weaker);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Skill candidates ─────────────────────────────────────────────────────── */
 .sk-sec {
   margin-top: calc(var(--spacing) * 6);

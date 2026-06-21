@@ -316,7 +316,8 @@ export function RefineGraph(): JSX.Element {
     return [...groups.entries()].map(([name, g]) => ({ name, x: g.x / g.n, y: g.y / g.n, n: g.n }))
   })
 
-  /** Live position of a node: a drag override if any, else the layout slot. */
+  /** Live position of a node: a drag override if any, else the force-layout slot.
+   *  (Nodes stay put on focus — no teleport; focus only highlights/dims in place.) */
   function posOf(id: string): { x: number; y: number } {
     const o = drag().get(id)
     if (o) return o
@@ -349,6 +350,30 @@ export function RefineGraph(): JSX.Element {
 
   const isFocusMode = () => focusId() !== null
   const nodeDimmed = (id: string) => isFocusMode() && !highlight().has(id)
+
+  // Related experiences of the focused node, grouped by edge kind (for the side
+  // panel). Direct edges only (depth-1) — the clearest "what's related" list; the
+  // depth selector still controls how far the graph dims/highlights.
+  const relatedGroups = createMemo(() => {
+    const id = focusId()
+    if (!id) return [] as Array<{ kind: EdgeKind; items: Array<{ id: string; title: string; dir: "in" | "out" }> }>
+    const titleOf = new Map(exps().map((e) => [e.id, e.title] as const))
+    const groups = new Map<EdgeKind, Array<{ id: string; title: string; dir: "in" | "out" }>>()
+    const add = (kind: EdgeKind, otherId: string, dir: "in" | "out") => {
+      const arr = groups.get(kind) ?? []
+      if (!arr.some((x) => x.id === otherId)) arr.push({ id: otherId, title: titleOf.get(otherId) ?? otherId, dir })
+      groups.set(kind, arr)
+    }
+    for (const e of allEdges()) {
+      if (e.from === id) add(e.kind, e.to, "out")
+      else if (e.to === id) add(e.kind, e.from, "in")
+    }
+    return [...groups.entries()].map(([kind, items]) => ({ kind, items }))
+  })
+  const focusedTitle = () => {
+    const id = focusId()
+    return id ? (exps().find((e) => e.id === id)?.title ?? id) : ""
+  }
   const edgeActive = (e: GraphEdge) => {
     const id = focusId()
     if (!id) return false
@@ -630,9 +655,11 @@ export function RefineGraph(): JSX.Element {
                           <text
                             class="rg-node-label"
                             classList={{
-                              "is-shown": focusId()
-                                ? !nodeDimmed(n.id)
-                                : exps().length <= 30 || n.deg >= 3,
+                              // focus mode: labels for the focused node + its
+                              // highlighted relations. overview: only big hubs —
+                              // others reveal on hover via pure CSS (no re-render
+                              // churn), so labels never pile up.
+                              "is-shown": focusId() ? !nodeDimmed(n.id) : n.deg >= 4,
                             }}
                             x={
                               posOf(n.id).x >= VIEW_W / 2
@@ -771,6 +798,48 @@ export function RefineGraph(): JSX.Element {
                   }}
                 </Show>
               </div>
+
+              {/* Related-experiences panel — click a node to see its relations
+                  listed by kind (the node itself stays put; the graph dims to
+                  highlight it + its relations in place). Click an item to jump. */}
+              <Show when={isFocusMode()}>
+                <aside class="rg-related">
+                  <div class="rg-related-hd">
+                    <span class="rg-related-title" title={focusedTitle()}>{focusedTitle()}</span>
+                    <button type="button" class="rg-related-x" title="清除聚焦" onClick={() => clearFocus()}>
+                      ×
+                    </button>
+                  </div>
+                  <div class="rg-related-sub">相关经验</div>
+                  <Show
+                    when={relatedGroups().length > 0}
+                    fallback={<div class="rg-related-empty">这条经验暂无关联边</div>}
+                  >
+                    <div class="rg-related-body">
+                      <For each={relatedGroups()}>
+                        {(g) => (
+                          <div class="rg-related-group">
+                            <div class="rg-related-kind" style={{ color: EDGE_STYLE[g.kind].color }}>
+                              {EDGE_STYLE[g.kind].label}
+                              <span class="rg-related-n">{g.items.length}</span>
+                            </div>
+                            <For each={g.items}>
+                              {(it) => (
+                                <button class="rg-related-item" title={it.title} onClick={() => focusNode(it.id)}>
+                                  <span class="rg-related-dir" aria-hidden="true">
+                                    {it.dir === "out" ? "→" : "←"}
+                                  </span>
+                                  <span class="rg-related-itemtitle">{it.title}</span>
+                                </button>
+                              )}
+                            </For>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </aside>
+              </Show>
             </div>
           </Show>
         </Show>

@@ -241,10 +241,115 @@ export function RefineLog(): JSX.Element {
   return (
     <div class="rl-root">
       <ActivityLog />
+      <JudgeLog />
       <GlobalReview />
       <SkillCandidates />
       <ExpPeek />
     </div>
+  )
+}
+
+/* ──────────────────────────────────────────────────────
+   Judge log — per-turn usage verdicts (applied / ignored /
+   not_relevant / bad) the sidecar judge recorded. Read-only;
+   lets the user sanity-check the judge's reasoning.
+   ────────────────────────────────────────────────────── */
+
+type JudgeVerdictRow = {
+  id: string
+  title?: string
+  state: "applied" | "ignored" | "not_relevant" | "bad"
+  bad_subtype?: string
+  rationale?: string
+}
+type JudgeLogRow = {
+  id: string
+  created_at: number
+  session_id: string
+  entry_id: string
+  workflow: string
+  verdicts: JudgeVerdictRow[]
+}
+const JSTATE_LABEL: Record<string, string> = { applied: "采用", ignored: "忽略", not_relevant: "无关", bad: "问题" }
+
+function JudgeLog(): JSX.Element {
+  const client = useExpClient()
+  const [data] = createResource<JudgeLogRow[]>(async () => {
+    const r = await client.get<{ entries: JudgeLogRow[] }>("/refiner/judge-log?limit=100").catch(() => ({ entries: [] }))
+    return r.entries ?? []
+  })
+  const [open, setOpen] = createSignal<Set<string>>(new Set())
+  const toggle = (id: string) =>
+    setOpen((s) => {
+      const n = new Set(s)
+      n.has(id) ? n.delete(id) : n.add(id)
+      return n
+    })
+  const counts = (vs: JudgeVerdictRow[]) => {
+    const c: Record<string, number> = {}
+    for (const v of vs) c[v.state] = (c[v.state] ?? 0) + 1
+    return c
+  }
+
+  return (
+    <section class="rl-section jl-sec">
+      <div class="rl-section-head">
+        <h2 class="rl-section-title">判定日志</h2>
+        <span class="sk-hint" style={{ margin: 0 }}>
+          judge 每轮对注入经验的判定(采用/忽略/无关/问题)。只记录,不影响召回。
+        </span>
+      </div>
+      <Show
+        when={(data() ?? []).length > 0}
+        fallback={<div class="sk-empty">还没有判定记录(agent 跑过几轮带注入的会话后才会出现)。</div>}
+      >
+        <div class="jl-feed">
+          <For each={data()}>
+            {(row) => (
+              <div class="jl-run">
+                <button class="jl-run-hd" onClick={() => toggle(row.id)}>
+                  <span class="jl-caret" data-open={open().has(row.id)}>
+                    ▸
+                  </span>
+                  <Show when={row.workflow}>
+                    <span class="jl-wf">{row.workflow}</span>
+                  </Show>
+                  <span class="jl-counts">
+                    <For each={Object.entries(counts(row.verdicts))}>
+                      {([st, n]) => (
+                        <span class={`jl-badge jl-${st}`}>
+                          {JSTATE_LABEL[st] ?? st} {n}
+                        </span>
+                      )}
+                    </For>
+                  </span>
+                  <span class="jl-time">{fmtTime(row.created_at)}</span>
+                </button>
+                <Show when={open().has(row.id)}>
+                  <div class="jl-verdicts">
+                    <For each={row.verdicts}>
+                      {(v) => (
+                        <div class="jl-verdict">
+                          <span class={`jl-badge jl-${v.state}`}>{JSTATE_LABEL[v.state] ?? v.state}</span>
+                          <IdChip id={v.id} />
+                          <span class="jl-vtitle">{v.title ?? ""}</span>
+                          <Show when={v.bad_subtype}>
+                            <span class="jl-subtype">{v.bad_subtype}</span>
+                          </Show>
+                          <Show when={v.rationale}>
+                            <span class="jl-rationale">{v.rationale}</span>
+                          </Show>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+    </section>
   )
 }
 

@@ -129,25 +129,31 @@ body {
   flex-direction: column;
   height: 100%;
 }
+/* Unified panel header — exp-panel style: module NAME only (no gray blurb),
+   tools right-aligned. Same typography/background as the 经验库 header so every
+   panel top reads identically. */
 .panel-head {
-  padding: 18px 24px;
-  border-bottom: 1px solid var(--border-weaker-base);
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--border-weak-base);
+  background: var(--background-strong);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
 }
-.panel-head h2 {
+.panel-head h2,
+.panel-head .ph-name {
   margin: 0;
-  font-size: var(--font-size-large);
+  font-size: var(--font-size-x-large);
   font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-normal);
   color: var(--text-strong);
   letter-spacing: -0.01em;
 }
-.panel-head .sub {
-  color: var(--text-weak);
-  font-size: var(--font-size-small);
-  margin-top: 3px;
+.ph-tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 .panel-body {
   padding: 20px 24px;
@@ -274,169 +280,6 @@ label.field select {
   color: var(--text-strong);
 }
 
-/* ── chat ──────────────────────────────────────────────────────────────── */
-.chat-log {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding-bottom: 8px;
-  max-width: 760px;
-  margin: 0 auto;
-}
-.msg {
-  max-width: 80%;
-  padding: 11px 14px;
-  border-radius: var(--radius-lg);
-  white-space: pre-wrap;
-  word-break: break-word;
-  line-height: var(--line-height-large);
-}
-.msg.user {
-  align-self: flex-end;
-  background: var(--surface-interactive-base);
-  color: var(--text-strong);
-}
-.msg.assistant {
-  align-self: flex-start;
-  background: var(--surface-raised-base);
-  color: var(--text-base);
-  border: 1px solid var(--border-weaker-base);
-}
-.msg.system {
-  align-self: center;
-  background: transparent;
-  color: var(--text-on-warning-base);
-  font-size: var(--font-size-small);
-}
-.msg img {
-  max-width: 240px;
-  border-radius: var(--radius-md);
-  margin-top: 8px;
-  display: block;
-}
-.chat-compose {
-  border-top: 1px solid var(--border-weaker-base);
-  padding: 14px 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  background: var(--background-strong);
-}
-.chat-compose .row {
-  max-width: 760px;
-  margin: 0 auto;
-  width: 100%;
-  justify-content: flex-end;
-}
-.chat-compose textarea {
-  max-width: 760px;
-  margin: 0 auto;
-}
-.img-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  background: var(--surface-raised-base);
-  border: 1px solid var(--border-weak-base);
-  border-radius: var(--radius-md);
-  padding: 6px 8px;
-  align-self: center;
-  max-width: 760px;
-  width: 100%;
-}
-.img-chip img {
-  height: 38px;
-  border-radius: var(--radius-sm);
-}
-.img-chip button {
-  background: transparent;
-  border: 0;
-  color: var(--text-weak);
-  cursor: pointer;
-  margin-left: auto;
-}
-
-/* ── outlook ───────────────────────────────────────────────────────────── */
-.mail {
-  border: 1px solid var(--border-weak-base);
-  border-radius: var(--radius-lg);
-  padding: 12px 14px;
-  margin-bottom: 10px;
-  background: var(--surface-raised-base);
-  transition: background 120ms ease;
-}
-.mail:hover {
-  background: var(--surface-raised-base-hover);
-}
-.mail .top {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: baseline;
-}
-.mail .subject {
-  font-weight: var(--font-weight-medium);
-  color: var(--text-strong);
-}
-.mail .subject.unread::before {
-  content: "";
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--text-interactive-base);
-  margin-right: 8px;
-  vertical-align: middle;
-}
-.mail .meta {
-  color: var(--text-weak);
-  font-size: var(--font-size-small);
-  white-space: nowrap;
-}
-.mail .preview {
-  color: var(--text-base);
-  font-size: var(--font-size-small);
-  margin-top: 5px;
-}
-
-/* ── notify history ────────────────────────────────────────────────────── */
-.hist {
-  list-style: none;
-  margin: 16px 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.hist li {
-  border: 1px solid var(--border-weak-base);
-  border-radius: var(--radius-md);
-  padding: 9px 12px;
-  font-size: var(--font-size-small);
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  background: var(--surface-raised-base);
-}
-.hist li strong {
-  color: var(--text-strong);
-  font-weight: var(--font-weight-medium);
-}
-.dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex: none;
-}
-.dot.info {
-  background: var(--text-interactive-base);
-}
-.dot.warn {
-  background: var(--text-on-warning-base);
-}
-.dot.error {
-  background: var(--text-on-critical-base);
-}
 
 /* ════════════════════════════════════════════════════════════════════════
    Polish layer — crisp icons, refined rail, premium chrome. Overrides above.
@@ -498,6 +341,68 @@ label.field select {
   width: 3px;
   border-radius: 3px;
   background: var(--text-interactive-base);
+}
+
+/* ── collapsible rail (icons-only) ────────────────────────────────────────
+   Inside Obsidian the workspace already has folders + note + console columns;
+   collapsing the rail to icons gives the panel column its width back. */
+.rail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+}
+.rail-collapse {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--icon-base);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.rail-collapse:hover {
+  background: var(--button-ghost-hover);
+  color: var(--icon-hover);
+}
+.shell[data-collapsed="true"] {
+  grid-template-columns: 64px minmax(0, 1fr);
+}
+.shell[data-collapsed="true"] .rail {
+  padding: 16px 8px;
+}
+.shell[data-collapsed="true"] .rail-brand-text,
+.shell[data-collapsed="true"] .rail-section,
+.shell[data-collapsed="true"] .rail-label,
+.shell[data-collapsed="true"] .rail-foot {
+  display: none;
+}
+.shell[data-collapsed="true"] .rail-head {
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0 12px;
+}
+.shell[data-collapsed="true"] .rail-item {
+  justify-content: center;
+  padding: 9px 0;
+}
+/* count badge degrades to a dot on the icon's corner when collapsed */
+.shell[data-collapsed="true"] .rail-badge {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  min-width: 8px;
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 0;
+  line-height: 0;
 }
 
 /* Buttons: align inline icons */

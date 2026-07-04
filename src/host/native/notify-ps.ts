@@ -64,8 +64,21 @@ export async function showToastPowerShell(req: NotifyReq): Promise<NotifyRes> {
       encoded,
     ])
     let err = ""
+    // Watchdog: same guard outlook.ts's runPowerShell uses — a wedged PowerShell
+    // (AV interception, WinRT stall) would otherwise leak a child process and a
+    // never-settling promise per toast.
+    const watchdog = setTimeout(() => {
+      ps.kill()
+      resolve({ ok: false, error: "toast 超时(20s)" })
+    }, 20_000)
     ps.stderr.on("data", (d) => (err += d.toString()))
-    ps.on("error", (e) => resolve({ ok: false, error: String(e) }))
-    ps.on("close", (code) => (code === 0 ? resolve({ ok: true }) : resolve({ ok: false, error: err.trim() || `exit ${code}` })))
+    ps.on("error", (e) => {
+      clearTimeout(watchdog)
+      resolve({ ok: false, error: String(e) })
+    })
+    ps.on("close", (code) => {
+      clearTimeout(watchdog)
+      code === 0 ? resolve({ ok: true }) : resolve({ ok: false, error: err.trim() || `exit ${code}` })
+    })
   })
 }

@@ -11,13 +11,28 @@
  * Pure diagnostics — no behavior change in the happy path.
  */
 import { app, type BrowserWindow } from "electron"
-import { appendFileSync } from "node:fs"
+import { appendFileSync, statSync, renameSync } from "node:fs"
 import { join } from "node:path"
+
+/** Rotate the log when it outgrows the cap — a tray daemon runs for weeks, and a
+ *  persistent renderer error source (backend down → console spam at ~1Hz) would
+ *  otherwise grow the file without bound. One .old generation is plenty. */
+const LOG_MAX_BYTES = 2 * 1024 * 1024
+let sizeCheckCounter = 0
 
 function logLine(label: string, msg: string): void {
   const line = `[${new Date().toISOString()}] [${label}] ${msg}`
   try {
-    appendFileSync(join(app.getPath("userData"), "winhost-renderer.log"), line + "\n")
+    const file = join(app.getPath("userData"), "winhost-renderer.log")
+    // stat every 50 writes, not every write — cheap steady-state.
+    if (sizeCheckCounter++ % 50 === 0) {
+      try {
+        if (statSync(file).size > LOG_MAX_BYTES) renameSync(file, file + ".old")
+      } catch {
+        /* missing file etc. */
+      }
+    }
+    appendFileSync(file, line + "\n")
   } catch {
     /* best effort */
   }

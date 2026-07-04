@@ -20,8 +20,13 @@
 
   /* ── Typography ──────────────────────────────────────────────────────── */
   --font-family-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  /* CJK fallbacks BEFORE the generic keyword: none of the latin mono fonts carry
+     CJK glyphs, and the generic `monospace` on zh-CN Windows is SimSun (宋体) —
+     serif-looking and jarring next to the YaHei body. CJK has no real monospace,
+     so falling back to the sans CJK faces is the standard compromise. */
   --font-family-mono:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", "PingFang SC",
+    "Microsoft YaHei", monospace;
 
   --font-size-small: 13px;
   --font-size-base: 14px;

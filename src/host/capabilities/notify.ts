@@ -1,8 +1,8 @@
 /**
- * notify capability — pop a native desktop toast. Used two ways from one
- * definition: the panel calls the route, the agent calls the tool.
+ * notify capability — pop a native desktop toast. No UI panel; two consumers:
  *
- *   route   POST /cap/notify/test   (the panel)
+ *   route   POST /cap/notify/test   (mailflow rules + external iframe panels
+ *                                    trigger a toast over HTTP)
  *   tool    notify_desktop          (the agent pings you from the VM)
  */
 import type { Capability, NotifyLevel, NotifyReq } from "../../contracts"
@@ -11,8 +11,8 @@ export const notifyCapability: Capability = {
   id: "notify",
   title: "通知",
   icon: "🔔",
-  description: "原生桌面 toast。agent 也能通过工具触发。",
-  hasPanel: true,
+  description: "原生桌面 toast。agent 通过工具触发,通知插件/邮件流走 HTTP 路由。",
+  hasPanel: false,
 
   routes: [
     {

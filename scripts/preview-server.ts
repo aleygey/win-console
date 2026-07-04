@@ -21,7 +21,7 @@ import { createRegistry } from "../src/host/registry"
 import { startServer } from "../src/host/server"
 import { builtinCapabilities } from "../src/host/capabilities"
 import { createChat } from "../src/host/chat"
-import { outlookSearch, outlookList, outlookReply, outlookFolders } from "../src/host/native/outlook"
+import { outlookSearch, outlookList, outlookReply, outlookFolders, outlookAttachments, outlookRead, outlookSaveAttachments } from "../src/host/native/outlook"
 import { showToastPowerShell } from "../src/host/native/notify-ps"
 
 const API_PORT = 8799
@@ -54,6 +54,9 @@ async function main(): Promise<void> {
     outlookList: (r) => outlookList(r),
     outlookReply: (r) => outlookReply(r),
     outlookFolders: () => outlookFolders(),
+    outlookAttachments: (id) => outlookAttachments(id),
+    outlookRead: (r) => outlookRead(r),
+    outlookSaveAttachments: (id, dir) => outlookSaveAttachments(id, dir),
     clipboardImage: async () => null,
     chat,
   }

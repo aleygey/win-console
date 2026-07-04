@@ -1,6 +1,8 @@
-/* Management-panel widgets layered on top of the shared app.css tokens. */
+/* Management-panel widgets layered on top of the shared app.css tokens.
+   (Real design tokens only — the old `var(--border, #2b2d31)` fallbacks always
+   won because --border/--muted don't exist, pinning dark-mode hexes in light UI.) */
 .card {
-  border: 1px solid var(--border, #2b2d31);
+  border: 1px solid var(--border-weak-base);
   border-radius: 10px;
   padding: 14px 16px;
   display: flex;
@@ -9,12 +11,12 @@
 }
 .card h3 {
   margin: 0 0 4px;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
 }
 
 .cap-row {
-  border-top: 1px solid var(--border, #2b2d31);
+  border-top: 1px solid var(--border-weak-base);
   padding: 12px 0;
   display: flex;
   flex-direction: column;
@@ -29,7 +31,7 @@
   justify-content: space-between;
 }
 .cap-title {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -37,7 +39,7 @@
 .cap-config {
   margin-top: 6px;
   padding-left: 12px;
-  border-left: 2px solid var(--border, #2b2d31);
+  border-left: 2px solid var(--border-weak-base);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -47,16 +49,16 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
-  color: var(--muted, #9aa0a6);
+  font-size: var(--font-size-small);
+  color: var(--text-weak);
   cursor: pointer;
 }
 
 .badge[data-active="true"] {
-  color: #4ade80;
+  color: var(--text-on-success-base);
 }
 .badge[data-active="false"] {
-  color: #f87171;
+  color: var(--text-on-critical-base);
 }
 .badge.small {
   font-size: 10px;

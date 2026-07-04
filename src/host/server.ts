@@ -7,7 +7,7 @@
  *   UIs    →  POST/GET /cap/<id><path> (per-capability routes)
  *             GET  /capabilities       (what to render)
  *             GET  /config, POST /config
- *             GET  /events             (SSE: new mail, summon-chat, …)
+ *             GET  /events             (SSE: new mail, config/capability changes, …)
  *   ops    →  GET  /health
  *
  * Generalised from the original win-console toolserver.ts: the hard-coded

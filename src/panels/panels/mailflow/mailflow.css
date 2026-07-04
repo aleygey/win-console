@@ -568,6 +568,9 @@
   font-size: var(--font-size-small);
   color: var(--text-weak);
   cursor: pointer;
+  /* flex:none + nowrap:否则在 flex 行里被挤到最小宽度,CJK 标签逐字竖排 */
+  flex: none;
+  white-space: nowrap;
 }
 .mf-action-hint {
   font-size: var(--font-size-small);
@@ -579,4 +582,12 @@
   .mf-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* 邮件信息勾选行(替代占位符) */
+.mf-include {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  padding: 2px 0;
 }

@@ -86,12 +86,72 @@ export type ChatMsg = {
   at?: number
 }
 
+/** One session's live status for the 会话监控 panel: what it is doing right now.
+ *  Built host-side from the tail of the session's messages — opencode persists
+ *  message parts incrementally while a turn runs, so the latest parts ARE the
+ *  live progress (running tools, streaming text) without any extra protocol. */
+/** A pending interactive request parked on a session — opencode's permission
+ *  ask or question tool. Until answered the session hangs, so the monitor
+ *  surfaces these with reply buttons. Read via opencode's global GET
+ *  /permission + /question lists (serve ≥1.16). */
+export type ChatQuestionOption = { label: string; description?: string }
+export type ChatQuestionInfo = {
+  question: string
+  header?: string
+  options: ChatQuestionOption[]
+  multiple?: boolean
+  custom?: boolean
+}
+export type ChatPendingAsk = {
+  kind: "permission" | "question"
+  requestId: string
+  sessionID: string
+  /** permission kind (e.g. "bash", "edit") + the patterns it wants. */
+  permission?: string
+  patterns?: string[]
+  /** question tool payload. */
+  questions?: ChatQuestionInfo[]
+}
+export type ChatAskReply =
+  | { kind: "permission"; requestId: string; reply: "once" | "always" | "reject" }
+  | { kind: "question"; requestId: string; answers?: string[][]; reject?: boolean }
+
+export type ChatMonitorEntry = {
+  id: string
+  title: string
+  updatedAt: number
+  /** Mid-turn: from opencode /session/status when available, else the tool-part
+   *  heuristic (latest assistant message has a pending/running tool part). */
+  busy: boolean
+  /** Refined state when known: "retry" = opencode is retrying a failed model
+   *  call — surfaces provider errors (refusals, gateway failures) that would
+   *  otherwise look like an endless "运行中". */
+  state?: "busy" | "retry"
+  /** Human-readable detail for `state` (e.g. the retry error message). */
+  stateDetail?: string
+  /** Last user query — the "current task" line. */
+  task?: string
+  /** Latest activity from the assistant side (last part of the last message). */
+  progress?: { kind: "tool" | "text" | "reasoning"; text: string; status?: ChatToolStatus }
+  /** Tool-part counts in the latest assistant message. */
+  tools?: { running: number; completed: number; error: number }
+  /** Pending permission/question parked on this session (blocks it until answered). */
+  ask?: ChatPendingAsk
+  /** Todo progress from the session's latest todowrite call (the agent's own
+   *  task list): completed/total + the item currently in progress. */
+  todos?: { done: number; total: number; current?: string }
+}
+
 /** The full chat backend (opencode SDK), injected via NativeHost.chat. */
 export interface ChatBackend {
   send(req: ChatSendReq): Promise<ChatSendRes>
   /** Create an empty session up front (so the panel can stream the very first
    *  turn by polling its history while send() is in flight). */
   createSession(directory?: string): Promise<{ ok: boolean; sessionId?: string; error?: string }>
+  /** Live status of the most recent sessions, for the 会话监控 panel. */
+  monitor(limit?: number): Promise<ChatMonitorEntry[]>
+  /** Answer a pending permission/question so the parked session can continue. */
+  replyAsk(req: ChatAskReply): Promise<{ ok: boolean; error?: string }>
   /** Forget local state for a session (or all if omitted). */
   reset(sessionId?: string): void
   sessions(): Promise<ChatSession[]>
@@ -114,8 +174,44 @@ export type OutlookMail = {
   received: string
   unread: boolean
   preview: string
+  /** MAPI EntryID — the handle for follow-up reads (outlook_read / attachments). */
+  entryId?: string
 }
 export type OutlookSearchRes = { ok: boolean; mails?: OutlookMail[]; error?: string; mock?: boolean }
+
+/** Read ONE mail in full: by entryId, or by folder+subject keyword (first match). */
+export type OutlookReadReq = {
+  entryId?: string
+  folder?: string
+  subjectContains?: string
+  /** Also list other mails in the same conversation (same thread topic). */
+  thread?: boolean
+}
+export type OutlookReadRes = {
+  ok: boolean
+  error?: string
+  mock?: boolean
+  mail?: {
+    entryId: string
+    subject: string
+    from: string
+    to: string
+    received: string
+    /** FULL body (capped at ~50k chars). */
+    body: string
+    attachments: Array<{ name: string; size: number }>
+    conversationTopic?: string
+  }
+  /** Same-conversation mails (newest first, ≤10) when thread=true. */
+  thread?: Array<{ entryId: string; subject: string; from: string; received: string }>
+}
+
+/** Save a mail's attachments to disk so the (WSL) agent can read them directly. */
+export type OutlookSaveAttachmentsRes = {
+  ok: boolean
+  error?: string
+  files?: Array<{ name: string; size: number; winPath: string }>
+}
 
 // ── Mail workflow (mailflow) ─────────────────────────────────────────────────
 // Rule-driven email automation: scan an Outlook folder for new mail matching a
@@ -136,6 +232,20 @@ export type MailMatch = {
 
 export type MailActionKind = "notify" | "trigger-session" | "ai-review-reply"
 
+/** Which parts of the matched email get appended (as a structured block / file
+ *  parts) to the rule's instruction. Replaces the old {subject}/{body} template
+ *  placeholders — the user writes a plain instruction and ticks what to attach.
+ *  Undefined field = its default (subject/from/received/body ON, attachments OFF). */
+export type MailInclude = {
+  subject?: boolean
+  from?: boolean
+  received?: boolean
+  body?: boolean
+  /** Extract the mail's attachments via Outlook COM and send them as inline
+   *  file parts (size-capped). */
+  attachments?: boolean
+}
+
 export type MailRule = {
   id: string
   name: string
@@ -144,10 +254,11 @@ export type MailRule = {
   folder?: string
   match: MailMatch
   action: MailActionKind
-  /** Prompt/message template. Placeholders {subject} {from} {body} {received} are filled. */
+  /** Plain task instruction (no placeholders needed — see `include`). Legacy
+   *  {subject}-style placeholders are still filled for old rules. */
   prompt?: string
-  /** trigger-session working dir (a Windows path is auto-mapped to the WSL mount). */
-  directory?: string
+  /** What email content to hand the agent along with the instruction. */
+  include?: MailInclude
   /** Model for trigger-session / ai-review-reply (omit = opencode's default). */
   model?: ModelRef
 }
@@ -218,6 +329,13 @@ export interface NativeHost {
   outlookReply(req: OutlookReplyReq): Promise<OutlookReplyRes>
   /** Enumerate the Outlook folder tree (for the mail-workflow folder picker). */
   outlookFolders(): Promise<OutlookFoldersRes>
+  /** Extract a mail's attachments (by EntryID) as inline data-URL files, size-
+   *  capped, so mailflow can hand them to the agent as file parts. */
+  outlookAttachments(entryId: string): Promise<{ ok: boolean; files?: Array<{ name: string; mime: string; dataUrl: string }>; error?: string }>
+  /** Read one mail in full (body + attachment list + optional thread). */
+  outlookRead(req: OutlookReadReq): Promise<OutlookReadRes>
+  /** Save a mail's attachments into `dir` (Windows path) for direct agent access. */
+  outlookSaveAttachments(entryId: string, dir: string): Promise<OutlookSaveAttachmentsRes>
   clipboardImage(): Promise<string | null>
   /** opencode SDK round-trip + session/model management, held host-side. */
   chat: ChatBackend
@@ -333,10 +451,6 @@ export interface GlobalConfig {
   disabledCapabilities: string[]
   /** Per-capability settings keyed by capability id. */
   capabilities: Record<string, CapabilityConfig>
-  /** Windows→Linux path prefix maps applied to the chat working directory.
-   *  e.g. { from: "D:\\proj", to: "/media/sf_proj" } for a VirtualBox share.
-   *  Empty = fall back to the WSL convention (D:\ → /mnt/d/). */
-  pathMaps?: Array<{ from: string; to: string }>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -449,6 +563,8 @@ export interface WinHostClient {
   chat: {
     send(req: ChatSendReq): Promise<ChatSendRes>
     createSession(directory?: string): Promise<{ ok: boolean; sessionId?: string; error?: string }>
+    monitor(limit?: number): Promise<ChatMonitorEntry[]>
+    replyAsk(req: ChatAskReply): Promise<{ ok: boolean; error?: string }>
     reset(sessionId?: string): Promise<{ ok: boolean }>
     sessions(): Promise<ChatSession[]>
     history(sessionId: string): Promise<ChatMsg[]>
@@ -456,7 +572,8 @@ export interface WinHostClient {
     undo(sessionId: string): Promise<{ ok: boolean; error?: string }>
     deleteSession(sessionId: string): Promise<{ ok: boolean; error?: string }>
   }
-  outlook: { search(req: OutlookSearchReq): Promise<OutlookSearchRes> }
+  // (the outlook convenience was removed with the standalone outlook capability —
+  //  the daemon-side COM access lives on NativeHost; mail automation is mailflow)
   notify: { test(req: NotifyReq): Promise<NotifyRes> }
   clipboard: { image(): Promise<string | null> }
 }

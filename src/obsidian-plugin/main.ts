@@ -1,9 +1,8 @@
 /**
  * Obsidian plugin entry — the daily unified entry. It embeds the win-host
- * console (served by the daemon over HTTP) in an iframe view, and bridges the
- * daemon's global hotkey: when the daemon raises Obsidian and emits summon:chat
- * over SSE, we open the console on the chat panel. New-mail events surface as
- * notices.
+ * console (served by the daemon over HTTP) in an iframe view. Ambient daemon
+ * events (new mail) surface as notices. (The global hotkey opens the daemon's
+ * own spotlight popup directly — no Obsidian involvement.)
  *
  * The plugin itself is tiny now (no bundled panels) — all UI lives in the
  * iframe, which is why there are no CSS conflicts with Obsidian's theme.
@@ -30,7 +29,7 @@ export default class WinHostPlugin extends Plugin {
 
     this.addRibbonIcon("message-square", "opencode 控制台", () => void this.activate())
     this.addCommand({ id: "open-console", name: "打开 opencode 控制台", callback: () => void this.activate() })
-    this.addCommand({ id: "quick-chat", name: "opencode 快速对话", callback: () => void this.activate("chat") })
+    this.addCommand({ id: "sessions", name: "opencode 会话监控", callback: () => void this.activate("sessions") })
 
     this.subscribe()
     this.addSettingTab(new WinHostSettingTab(this.app, this))
@@ -45,7 +44,7 @@ export default class WinHostPlugin extends Plugin {
     return this.settings.winHostUrl.replace(/\/+$/, "") + "/"
   }
 
-  /** Listen on the daemon SSE stream for the summon hotkey + ambient events. */
+  /** Listen on the daemon SSE stream for ambient events (new mail, …). */
   private subscribe(): void {
     this.es?.close()
     try {
@@ -53,8 +52,7 @@ export default class WinHostPlugin extends Plugin {
       this.es.onmessage = (ev) => {
         try {
           const e = JSON.parse(ev.data) as { type?: string; payload?: { subject?: string } }
-          if (e.type === "summon:chat") void this.activate("chat")
-          else if (e.type === "outlook:new-mail") new Notice(`📧 新邮件:${e.payload?.subject ?? ""}`)
+          if (e.type === "outlook:new-mail") new Notice(`📧 新邮件:${e.payload?.subject ?? ""}`)
         } catch {
           /* ignore malformed frame */
         }
@@ -81,12 +79,20 @@ export default class WinHostPlugin extends Plugin {
     this.settings = { ...DEFAULT_SETTINGS, ...(await this.loadData()) }
   }
 
+  private lastAppliedUrl?: string
+
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings)
+    // Only re-subscribe + reload the iframes when the URL actually CHANGED —
+    // the settings field fires per keystroke, and resubscribing/reassigning
+    // iframe.src on every character reloads the console (losing its state) and
+    // spins the EventSource retry loop against half-typed hosts.
+    const url = this.consoleUrl()
+    if (url === this.lastAppliedUrl) return
+    this.lastAppliedUrl = url
     this.subscribe()
-    // Re-point any open iframe views at the new URL.
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
-      if (leaf.view instanceof WinHostView) leaf.view.setUrl(this.consoleUrl())
+      if (leaf.view instanceof WinHostView) leaf.view.setUrl(url)
     }
   }
 }
@@ -107,14 +113,17 @@ class WinHostSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("win-host 地址")
       .setDesc("常驻 daemon 的 HTTP 地址(默认本机 http://127.0.0.1:8799)。控制台页面与对话/邮件/通知都经它;经验库地址在控制台「管理」里配。")
-      .addText((t) =>
-        t
-          .setPlaceholder("http://127.0.0.1:8799")
+      .addText((t) => {
+        // Debounced: onChange fires per keystroke; applying a half-typed URL
+        // reloads every console iframe + resubscribes SSE against garbage hosts.
+        let timer: ReturnType<typeof setTimeout> | undefined
+        t.setPlaceholder("http://127.0.0.1:8799")
           .setValue(this.plugin.settings.winHostUrl)
-          .onChange(async (v) => {
+          .onChange((v) => {
             this.plugin.settings.winHostUrl = v.trim() || DEFAULT_SETTINGS.winHostUrl
-            await this.plugin.saveSettings()
-          }),
-      )
+            clearTimeout(timer)
+            timer = setTimeout(() => void this.plugin.saveSettings(), 600)
+          })
+      })
   }
 }

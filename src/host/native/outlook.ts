@@ -14,9 +14,12 @@ import type {
   OutlookSearchRes,
   OutlookListReq,
   OutlookListRes,
+  OutlookReadReq,
+  OutlookReadRes,
   OutlookReplyReq,
   OutlookReplyRes,
   OutlookFoldersRes,
+  OutlookSaveAttachmentsRes,
   MailMessage,
 } from "../../contracts"
 
@@ -93,6 +96,7 @@ foreach ($m in $items) {
       received = $m.ReceivedTime.ToString('o')
       unread   = [bool]$m.UnRead
       preview  = ($body -replace '\\s+',' ').Trim()
+      entryId  = [string]$m.EntryID
     })
   } catch {}
 }
@@ -139,6 +143,7 @@ function normalize(x: unknown): OutlookMail {
     received: String(o.received ?? ""),
     unread: Boolean(o.unread),
     preview: String(o.preview ?? ""),
+    entryId: o.entryId ? String(o.entryId) : undefined,
   }
 }
 
@@ -174,6 +179,260 @@ export async function outlookReply(req: OutlookReplyReq): Promise<OutlookReplyRe
   } catch (e) {
     return { ok: false, error: `回复 Outlook 邮件失败:${e instanceof Error ? e.message : String(e)}` }
   }
+}
+
+/** Shared PS snippet: resolve a backslash folder path relative to the mailbox
+ *  root (or inbox), same semantics as the mailflow list script. Expects $inbox. */
+const PS_RESOLVE_FOLDER = `function Resolve-Folder($pathStr) {
+  if ([string]::IsNullOrWhiteSpace($pathStr)) { return $inbox }
+  $parts = $pathStr -split '[\\\\/]' | Where-Object { $_ -ne '' }
+  foreach ($start in @($inbox.Parent, $inbox)) {
+    $cur = $start; $okAll = $true
+    foreach ($p in $parts) {
+      $next = $null
+      foreach ($sf in $cur.Folders) { if ($sf.Name -eq $p) { $next = $sf; break } }
+      if ($null -eq $next) { $okAll = $false; break }
+      $cur = $next
+    }
+    if ($okAll) { return $cur }
+  }
+  throw "找不到文件夹: $pathStr"
+}`
+
+/** Read ONE mail in full — by EntryID, or first subject-keyword match in a
+ *  folder. Optionally lists the rest of its conversation (same topic, ≤10). */
+export async function outlookRead(req: OutlookReadReq): Promise<OutlookReadRes> {
+  if (process.platform !== "win32") return { ok: true, mock: true }
+  if (!req.entryId && !req.subjectContains) return { ok: false, error: "需要 entryId 或 subjectContains" }
+  try {
+    const stdout = await runPowerShell(psReadScript(req))
+    const parsed = JSON.parse(stdout.trim() || "{}") as Record<string, any>
+    if (!parsed || !parsed.entryId) return { ok: false, error: "没有找到匹配的邮件" }
+    return {
+      ok: true,
+      mail: {
+        entryId: String(parsed.entryId),
+        subject: String(parsed.subject ?? ""),
+        from: String(parsed.from ?? ""),
+        to: String(parsed.to ?? ""),
+        received: String(parsed.received ?? ""),
+        body: String(parsed.body ?? ""),
+        attachments: Array.isArray(parsed.attachments)
+          ? parsed.attachments.map((a: any) => ({ name: String(a?.name ?? ""), size: Number(a?.size ?? 0) }))
+          : [],
+        conversationTopic: parsed.topic ? String(parsed.topic) : undefined,
+      },
+      thread: Array.isArray(parsed.thread)
+        ? parsed.thread.map((t: any) => ({
+            entryId: String(t?.entryId ?? ""),
+            subject: String(t?.subject ?? ""),
+            from: String(t?.from ?? ""),
+            received: String(t?.received ?? ""),
+          }))
+        : undefined,
+    }
+  } catch (e) {
+    return { ok: false, error: `读取邮件失败:${e instanceof Error ? e.message : String(e)}` }
+  }
+}
+
+function psReadScript(req: OutlookReadReq): string {
+  const id = (req.entryId ?? "").replace(/'/g, "''")
+  const folder = (req.folder ?? "").replace(/'/g, "''")
+  const kw = (req.subjectContains ?? "").replace(/'/g, "''")
+  return `[Console]::OutputEncoding=[System.Text.Encoding]::UTF8
+$ErrorActionPreference='Stop'
+$ol = New-Object -ComObject Outlook.Application
+$ns = $ol.GetNamespace('MAPI')
+${PS_FROM_FN}
+$inbox = $ns.GetDefaultFolder(6)
+${PS_RESOLVE_FOLDER}
+$item = $null
+if ('${id}' -ne '') {
+  $item = $ns.GetItemFromID('${id}')
+} else {
+  $target = Resolve-Folder '${folder}'
+  $items = $target.Items
+  $items.Sort('[ReceivedTime]', $true)
+  foreach ($m in $items) {
+    try { if ($m.Subject -like "*${kw}*") { $item = $m; break } } catch {}
+  }
+}
+if ($null -eq $item) { '{}'; exit 0 }
+$body = [string]$item.Body
+if ($body.Length -gt 50000) { $body = $body.Substring(0, 50000) + "\`n…(正文已截断)" }
+$atts = New-Object System.Collections.ArrayList
+foreach ($a in $item.Attachments) { $null = $atts.Add(@{ name = [string]$a.FileName; size = [long]$a.Size }) }
+$to = ''
+try { $to = [string]$item.To } catch {}
+$topic = ''
+try { $topic = [string]$item.ConversationTopic } catch {}
+$thread = New-Object System.Collections.ArrayList
+if ($${req.thread ? "true" : "false"} -and $topic -ne '') {
+  try {
+    $pf = $item.Parent
+    $tItems = $pf.Items
+    $tItems.Sort('[ReceivedTime]', $true)
+    foreach ($t in $tItems) {
+      if ($thread.Count -ge 10) { break }
+      try {
+        if ($t.ConversationTopic -eq $topic -and $t.EntryID -ne $item.EntryID) {
+          $null = $thread.Add(@{ entryId = [string]$t.EntryID; subject = [string]$t.Subject; from = (Get-FromString $t); received = $t.ReceivedTime.ToString('o') })
+        }
+      } catch {}
+    }
+  } catch {}
+}
+[PSCustomObject]@{
+  entryId = [string]$item.EntryID
+  subject = [string]$item.Subject
+  from = (Get-FromString $item)
+  to = $to
+  received = $item.ReceivedTime.ToString('o')
+  body = $body
+  attachments = $atts
+  topic = $topic
+  thread = $thread
+} | ConvertTo-Json -Depth 4 -Compress`
+}
+
+/** Save a mail's attachments into `dir` so the agent (WSL side, via /mnt/…)
+ *  can read them directly — no size cap here since nothing travels inline. */
+export async function outlookSaveAttachments(entryId: string, dir: string): Promise<OutlookSaveAttachmentsRes> {
+  if (process.platform !== "win32") return { ok: true, files: [] }
+  if (!entryId) return { ok: false, error: "缺少 entryId" }
+  try {
+    const stdout = await runPowerShell(psSaveAttachmentsScript(entryId, dir))
+    const parsed: unknown = JSON.parse(stdout.trim() || "[]")
+    const arr = (Array.isArray(parsed) ? parsed : parsed ? [parsed] : []) as Array<Record<string, unknown>>
+    return {
+      ok: true,
+      files: arr.map((a) => ({ name: String(a.name ?? ""), size: Number(a.size ?? 0), winPath: String(a.path ?? "") })),
+    }
+  } catch (e) {
+    return { ok: false, error: `保存附件失败:${e instanceof Error ? e.message : String(e)}` }
+  }
+}
+
+function psSaveAttachmentsScript(entryId: string, dir: string): string {
+  const id = entryId.replace(/'/g, "''")
+  const d = dir.replace(/'/g, "''")
+  return `[Console]::OutputEncoding=[System.Text.Encoding]::UTF8
+$ErrorActionPreference='Stop'
+$ol = New-Object -ComObject Outlook.Application
+$ns = $ol.GetNamespace('MAPI')
+$item = $ns.GetItemFromID('${id}')
+$dir = '${d}'
+$null = New-Item -ItemType Directory -Force -Path $dir
+$out = New-Object System.Collections.ArrayList
+foreach ($att in $item.Attachments) {
+  $name = [string]$att.FileName
+  # sanitize: strip path separators a hostile filename could carry
+  $safe = ($name -replace '[\\\\/:*?"<>|]', '_')
+  $dest = Join-Path $dir $safe
+  try {
+    $att.SaveAsFile($dest)
+    $null = $out.Add(@{ name = $safe; size = [long](Get-Item -LiteralPath $dest).Length; path = $dest })
+  } catch {}
+}
+ConvertTo-Json -Depth 3 @($out)`
+}
+
+/** Extract a mail's attachments as inline data-URL files. Caps: ≤5 files,
+ *  ≤4MB each, ≤10MB total (they travel inline in the chat prompt request).
+ *  Oversized/extra attachments are skipped with a note in `error`. */
+export async function outlookAttachments(
+  entryId: string,
+): Promise<{ ok: boolean; files?: Array<{ name: string; mime: string; dataUrl: string }>; error?: string }> {
+  if (process.platform !== "win32") return { ok: true, files: [] }
+  if (!entryId) return { ok: false, error: "缺少 entryId" }
+  try {
+    const stdout = await runPowerShell(psAttachmentsScript(entryId))
+    const parsed: unknown = JSON.parse(stdout.trim() || "[]")
+    const arr = (Array.isArray(parsed) ? parsed : parsed ? [parsed] : []) as Array<Record<string, unknown>>
+    const files: Array<{ name: string; mime: string; dataUrl: string }> = []
+    const skipped: string[] = []
+    let total = 0
+    for (const a of arr) {
+      const name = String(a.name ?? "attachment")
+      if (a.skipped) {
+        skipped.push(`${name}(${a.skipped})`)
+        continue
+      }
+      const b64 = String(a.b64 ?? "")
+      if (!b64) continue
+      const bytes = Math.floor((b64.length * 3) / 4)
+      if (files.length >= 5 || total + bytes > 10 * 1024 * 1024) {
+        skipped.push(`${name}(超出总量上限)`)
+        continue
+      }
+      total += bytes
+      const mime = mimeOfName(name)
+      files.push({ name, mime, dataUrl: `data:${mime};base64,${b64}` })
+    }
+    return { ok: true, files, error: skipped.length ? `已跳过:${skipped.join("、")}` : undefined }
+  } catch (e) {
+    return { ok: false, error: `读取附件失败:${e instanceof Error ? e.message : String(e)}` }
+  }
+}
+
+const MIME_BY_EXT: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  bmp: "image/bmp",
+  webp: "image/webp",
+  pdf: "application/pdf",
+  txt: "text/plain",
+  log: "text/plain",
+  md: "text/markdown",
+  csv: "text/csv",
+  json: "application/json",
+  xml: "application/xml",
+  html: "text/html",
+  zip: "application/zip",
+  "7z": "application/x-7z-compressed",
+  gz: "application/gzip",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  bin: "application/octet-stream",
+  hex: "text/plain",
+  patch: "text/plain",
+  diff: "text/plain",
+}
+function mimeOfName(name: string): string {
+  const ext = /\.([A-Za-z0-9]+)$/.exec(name)?.[1]?.toLowerCase() ?? ""
+  return MIME_BY_EXT[ext] ?? "application/octet-stream"
+}
+
+/** Save each attachment to %TEMP%, read + base64 it, clean up. Per-file cap
+ *  4MB (larger ones reported as skipped so the caller can tell the user). */
+function psAttachmentsScript(entryId: string): string {
+  const id = entryId.replace(/'/g, "''")
+  return `[Console]::OutputEncoding=[System.Text.Encoding]::UTF8
+$ErrorActionPreference='Stop'
+$ol = New-Object -ComObject Outlook.Application
+$ns = $ol.GetNamespace('MAPI')
+$item = $ns.GetItemFromID('${id}')
+$out = New-Object System.Collections.ArrayList
+foreach ($att in $item.Attachments) {
+  $name = [string]$att.FileName
+  if ($att.Size -gt 4MB) { $null = $out.Add(@{ name = $name; skipped = "超过4MB" }); continue }
+  $tmp = Join-Path $env:TEMP ("wh_att_" + [Guid]::NewGuid().ToString('N') + "_" + $name)
+  try {
+    $att.SaveAsFile($tmp)
+    $b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($tmp))
+    $null = $out.Add(@{ name = $name; b64 = $b64 })
+  } catch {
+    $null = $out.Add(@{ name = $name; skipped = "读取失败" })
+  } finally {
+    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+  }
+}
+ConvertTo-Json -Depth 3 @($out)`
 }
 
 export async function outlookFolders(): Promise<OutlookFoldersRes> {

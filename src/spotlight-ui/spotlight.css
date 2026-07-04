@@ -59,7 +59,7 @@ body,
   background: transparent;
   resize: none;
   font-family: inherit;
-  font-size: 14px;
+  font-size: var(--font-size-base);
   line-height: 1.5;
   color: var(--text-strong);
   /* override app.css's textarea{min-height:76px} — this is a single-line bar that
@@ -71,9 +71,7 @@ body,
   padding: 3px 0;
   -webkit-app-region: no-drag;
 }
-.qa-input::placeholder {
-  color: var(--text-weak);
-}
+/* placeholder color comes from app.css (--text-weaker), same as every input */
 .qa-input:focus {
   outline: none;
   box-shadow: none;
@@ -101,13 +99,16 @@ body,
 .qa-model {
   -webkit-app-region: no-drag;
   flex: none;
-  max-width: 116px;
-  font-size: 12px;
+  max-width: 132px;
+  font-size: var(--font-size-small);
   color: var(--text-base);
-  background: var(--surface-base);
+  /* background-COLOR longhand on purpose: the `background` shorthand would wipe
+     app.css's select chevron (background-image) while appearance:none already
+     removed the native arrow → no dropdown affordance at all. */
+  background-color: var(--surface-base);
   border: 1px solid var(--border-weak-base);
   border-radius: var(--radius-md);
-  padding: 3px 6px;
+  padding: 3px 24px 3px 6px;
   cursor: pointer;
 }
 .qa-model:focus {
@@ -128,7 +129,7 @@ body,
   align-items: center;
   gap: 5px;
   max-width: 180px;
-  font-size: 12px;
+  font-size: var(--font-size-small);
   color: var(--text-base);
   background: var(--surface-weak);
   border-radius: var(--radius-md);
@@ -165,11 +166,11 @@ body,
   border-top: 1px solid transparent;
 }
 .qa[data-expanded="true"] .qa-thread-wrap {
-  max-height: 360px;
+  max-height: 480px;
   border-top-color: var(--border-weak-base);
 }
 .qa-thread {
-  max-height: 360px;
+  max-height: 480px;
   overflow-y: auto;
   padding: 13px;
   display: flex;
@@ -206,11 +207,18 @@ body,
 }
 .qa-bubble {
   max-width: 82%;
-  font-size: 14px;
+  min-width: 0; /* let a flex child shrink so long content wraps instead of overflowing */
+  font-size: var(--font-size-base);
   line-height: 1.5;
   padding: 7px 10px;
   border-radius: 11px;
   overflow-wrap: anywhere;
+  word-break: break-word;
+}
+/* User / system messages render raw text — keep their newlines (the input can be
+   multi-line) instead of collapsing them to one line. */
+.qa-bubble.plain {
+  white-space: pre-wrap;
 }
 .qa-msg.user .qa-bubble {
   background: var(--cobalt-9);
@@ -224,26 +232,159 @@ body,
   background: var(--surface-critical-weak);
   color: var(--text-on-critical-base);
 }
-.qa-bubble.markdown :first-child {
+/* ── markdown body: COMPLETE element coverage ─────────────────────────────────
+   The popup renders arbitrary model output (GFM). Every element marked can emit
+   gets an explicit style at the bubble's 14px base — otherwise browser defaults
+   leak through (h1 at 2em, borderless tables…), which is exactly the
+   "字体大小不一 / 表格没框" complaint. Sizes are em-based off the bubble's 14px. */
+/* child combinator ON PURPOSE — trim only the bubble's outer edges, not every
+   nested first/last child (a descendant selector would nuke li/blockquote margins) */
+.qa-bubble.markdown > :first-child {
   margin-top: 0;
 }
-.qa-bubble.markdown :last-child {
+.qa-bubble.markdown > :last-child {
   margin-bottom: 0;
 }
 .qa-bubble.markdown p {
   margin: 0 0 6px;
 }
-.qa-bubble.markdown pre {
-  background: var(--background-weak);
-  border-radius: var(--radius-md);
-  padding: 8px 10px;
-  overflow-x: auto;
-  font-family: var(--font-family-mono);
-  font-size: 12px;
+
+/* headings — compact, near body size (a chat bubble is not a document) */
+.qa-bubble.markdown h1,
+.qa-bubble.markdown h2,
+.qa-bubble.markdown h3,
+.qa-bubble.markdown h4,
+.qa-bubble.markdown h5,
+.qa-bubble.markdown h6 {
+  margin: 10px 0 5px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text-strong);
 }
+.qa-bubble.markdown h1 {
+  font-size: 1.2em;
+}
+.qa-bubble.markdown h2 {
+  font-size: 1.12em;
+}
+.qa-bubble.markdown h3 {
+  font-size: 1.05em;
+}
+.qa-bubble.markdown h4,
+.qa-bubble.markdown h5,
+.qa-bubble.markdown h6 {
+  font-size: 1em;
+}
+
+/* lists */
+.qa-bubble.markdown ul,
+.qa-bubble.markdown ol {
+  margin: 4px 0 8px;
+  padding-left: 20px;
+}
+.qa-bubble.markdown li {
+  margin: 2px 0;
+}
+.qa-bubble.markdown li > p {
+  margin: 0;
+}
+/* GFM task list: kill the double marker (bullet + checkbox) */
+.qa-bubble.markdown li:has(> input[type="checkbox"]) {
+  list-style: none;
+  margin-left: -20px;
+}
+.qa-bubble.markdown li input[type="checkbox"] {
+  margin-right: 5px;
+  vertical-align: -1px;
+  cursor: default;
+}
+
+/* tables — bordered, GitHub-style, horizontally scrollable when wide */
+.qa-bubble.markdown table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: 6px 0 10px;
+  font-size: 0.93em;
+}
+.qa-bubble.markdown th,
+.qa-bubble.markdown td {
+  border: 1px solid var(--border-weak-base);
+  padding: 4px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+.qa-bubble.markdown th {
+  background: var(--surface-weak);
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.qa-bubble.markdown tr:nth-child(2n) td {
+  background: var(--surface-sunken, transparent);
+}
+
+/* code — inline chips + wrapped block (popup is fixed-width; a horizontally
+   scrolling pre would just clip, so long lines WRAP) */
 .qa-bubble.markdown code {
   font-family: var(--font-family-mono);
-  font-size: 12px;
+  /* 0.95em: 0.88em made inline code read visibly smaller than the 14px prose */
+  font-size: 0.95em;
+  background: var(--surface-inset-base);
+  border-radius: var(--radius-sm);
+  padding: 1px 5px;
+}
+.qa-bubble.markdown pre {
+  background: var(--surface-inset-base);
+  border: 1px solid var(--border-weaker-base);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  margin: 6px 0 10px;
+  max-width: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  font-family: var(--font-family-mono);
+  font-size: 0.86em;
+  line-height: 1.5;
+}
+.qa-bubble.markdown pre code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+}
+
+/* quotes / rules / links / media */
+.qa-bubble.markdown blockquote {
+  margin: 6px 0 8px;
+  padding: 2px 0 2px 10px;
+  border-left: 3px solid var(--border-base);
+  color: var(--text-weak);
+}
+.qa-bubble.markdown blockquote > :last-child {
+  margin-bottom: 0;
+}
+.qa-bubble.markdown hr {
+  border: 0;
+  border-top: 1px solid var(--border-weak-base);
+  margin: 10px 0;
+}
+.qa-bubble.markdown a,
+.qa-bubble.markdown a:visited {
+  color: var(--text-interactive-base, var(--cobalt-9));
+  text-decoration: none;
+}
+.qa-bubble.markdown a:hover {
+  text-decoration: underline;
+}
+.qa-bubble.markdown img {
+  max-width: 100%;
+  border-radius: var(--radius-md);
+}
+.qa-bubble.markdown strong {
+  font-weight: 600;
+  color: var(--text-strong);
 }
 
 /* typing dots */

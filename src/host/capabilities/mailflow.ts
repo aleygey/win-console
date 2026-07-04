@@ -17,14 +17,16 @@
 import type {
   Capability,
   HostContext,
+  MailInclude,
   MailRule,
   MailMessage,
   MailQueueItem,
   MailScanRes,
   MailActionKind,
 } from "../../contracts"
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs"
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs"
 import { join, dirname } from "node:path"
+import { tmpdir } from "node:os"
 
 type State = { processed: Record<string, string[]>; queue: MailQueueItem[] }
 
@@ -91,17 +93,19 @@ function matchRule(rule: MailRule, m: MailMessage): boolean {
   return true
 }
 
+/** Plain task instructions — the email content itself is appended as a
+ *  structured block per the rule's `include` checkboxes (no placeholders). */
 const DEFAULT_PROMPT: Record<MailActionKind, string> = {
   notify: "新邮件:{subject} — {from}",
-  "trigger-session":
-    "下面是一封邮件,请据此开始处理对应任务,完成后简要说明你做了什么。\n\n" +
-    "主题:{subject}\n发件人:{from}\n时间:{received}\n\n正文:\n{body}",
+  "trigger-session": "下面是一封邮件,请据此开始处理对应任务,完成后简要说明你做了什么。",
   "ai-review-reply":
     "下面是一封需要我回复的邮件(例如 Gerrit 评审、问题咨询)。请先做初步审查/分析," +
     "再用中文起草一封专业、简洁、可直接发送的回复邮件正文。只输出回复正文本身," +
-    "不要任何解释、不要主题行。\n\n主题:{subject}\n发件人:{from}\n\n正文:\n{body}",
+    "不要任何解释、不要主题行。",
 }
 
+/** Legacy placeholder fill — old rules may still carry {subject}-style templates
+ *  (and the notify toast template legitimately uses them). */
 function fill(tpl: string, m: MailMessage): string {
   return tpl
     .replace(/\{subject\}/g, m.subject)
@@ -110,13 +114,33 @@ function fill(tpl: string, m: MailMessage): string {
     .replace(/\{body\}/g, m.body)
 }
 
-/** Text to hand the agent for a session/reply. Fills placeholders; if the
- *  (custom) prompt references NONE of them, append the full mail so the agent
- *  always has the email content — the user shouldn't have to add {body} etc. */
-function mailText(tpl: string, m: MailMessage): string {
-  const filled = fill(tpl, m)
-  if (/\{(subject|from|body|received)\}/.test(tpl)) return filled
-  return `${filled}\n\n--- 邮件内容 ---\n主题:${m.subject}\n发件人:${m.from}\n时间:${m.received}\n\n正文:\n${m.body}`
+/** Effective include flags — every field defaults ON except attachments, so an
+ *  untouched rule behaves like the old auto-append. */
+function effectiveInclude(rule: MailRule): Required<MailInclude> {
+  const inc = rule.include ?? {}
+  return {
+    subject: inc.subject !== false,
+    from: inc.from !== false,
+    received: inc.received !== false,
+    body: inc.body !== false,
+    attachments: inc.attachments === true,
+  }
+}
+
+/** Instruction + selected email fields as one structured block. If a legacy
+ *  prompt still uses placeholders, fill them and skip the block (the template
+ *  already placed the fields where it wants them). */
+function mailText(rule: MailRule, m: MailMessage): string {
+  const tpl = (rule.prompt && rule.prompt.trim()) || DEFAULT_PROMPT[rule.action]
+  if (/\{(subject|from|body|received)\}/.test(tpl)) return fill(tpl, m)
+  const inc = effectiveInclude(rule)
+  const lines: string[] = []
+  if (inc.subject) lines.push(`主题:${m.subject}`)
+  if (inc.from) lines.push(`发件人:${m.from}`)
+  if (inc.received) lines.push(`时间:${m.received}`)
+  if (inc.body) lines.push(`\n正文:\n${m.body}`)
+  if (lines.length === 0) return tpl
+  return `${tpl}\n\n--- 邮件内容 ---\n${lines.join("\n")}`
 }
 
 function preview(m: MailMessage): string {
@@ -137,16 +161,76 @@ function queueItemFor(rule: MailRule, m: MailMessage): MailQueueItem {
 
 /** Run a rule's action for one matched mail. ai-review-reply stays `pending`
  *  (awaits approval); notify/trigger-session resolve to `done` immediately. */
+/** chat.send with a hard deadline. Every scan is serialized on scanChain, so ONE
+ *  wedged/hours-long opencode prompt would otherwise block every later auto-poll
+ *  and manual scan until the daemon restarts. On timeout the queue item goes to
+ *  "error" and the chain advances; the underlying agent run may still finish
+ *  server-side (visible in 会话监控), we just stop waiting for it. */
+const DISPATCH_TIMEOUT_MS = 10 * 60 * 1000
+async function sendWithDeadline(
+  ctx: HostContext,
+  req: Parameters<HostContext["native"]["chat"]["send"]>[0],
+): Promise<Awaited<ReturnType<HostContext["native"]["chat"]["send"]>>> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      ctx.native.chat.send(req),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`mailflow 派发超时(>${DISPATCH_TIMEOUT_MS / 60000}min)`)), DISPATCH_TIMEOUT_MS)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+/** Where outlook_attachments drops files. Prefer D:\wsl-tmp (the established
+ *  Windows↔WSL exchange dir — maps to /mnt/d/wsl-tmp for the agent); fall back
+ *  to %TEMP% when the machine has no D:\wsl-tmp. Per-mail subdir so repeated
+ *  fetches don't collide. */
+function attachmentSaveDir(entryId: string): string {
+  const tag = (entryId || "mail").replace(/[^A-Za-z0-9]/g, "").slice(-12) || "mail"
+  const base = existsSync("D:\\wsl-tmp") ? "D:\\wsl-tmp\\mail-att" : join(tmpdir(), "winhost-mail-att")
+  return join(base, tag)
+}
+
+/** Windows path → the WSL mount the (VM/WSL) agent reads: D:\x → /mnt/d/x. */
+function winPathToWsl(p: string): string {
+  const m = /^([A-Za-z]):[\\/](.*)$/.exec(p)
+  return m ? `/mnt/${m[1].toLowerCase()}/${m[2].replace(/\\/g, "/")}` : p
+}
+
+/** Pull the mail's attachments as inline file parts when the rule asks for
+ *  them. Failures degrade to a note in the prompt, never block the dispatch. */
+async function attachmentFiles(
+  ctx: HostContext,
+  rule: MailRule,
+  m: MailMessage,
+): Promise<{ files?: Array<{ name: string; mime: string; dataUrl: string }>; note: string }> {
+  if (!effectiveInclude(rule).attachments) return { note: "" }
+  try {
+    const r = await ctx.native.outlookAttachments(m.entryId)
+    if (!r.ok) return { note: `\n\n(附件读取失败:${r.error ?? "未知错误"})` }
+    const names = (r.files ?? []).map((f) => f.name).join("、")
+    const note =
+      (names ? `\n\n(随信附件:${names})` : "\n\n(该邮件没有附件)") + (r.error ? `\n(${r.error})` : "")
+    return { files: r.files && r.files.length > 0 ? r.files : undefined, note }
+  } catch (e) {
+    return { note: `\n\n(附件读取失败:${String(e)})` }
+  }
+}
+
 async function dispatch(ctx: HostContext, rule: MailRule, m: MailMessage): Promise<MailQueueItem> {
   const item = queueItemFor(rule, m)
-  const prompt = (rule.prompt && rule.prompt.trim()) || DEFAULT_PROMPT[rule.action]
   try {
     if (rule.action === "notify") {
-      await ctx.native.showToast({ title: `📧 ${rule.name || "邮件"}`, message: fill(prompt, m), level: "info" })
+      const tpl = (rule.prompt && rule.prompt.trim()) || DEFAULT_PROMPT.notify
+      await ctx.native.showToast({ title: `📧 ${rule.name || "邮件"}`, message: fill(tpl, m), level: "info" })
       item.status = "done"
       item.decidedAt = Date.now()
     } else if (rule.action === "trigger-session") {
-      const res = await ctx.native.chat.send({ text: mailText(prompt, m), directory: rule.directory, model: rule.model })
+      const att = await attachmentFiles(ctx, rule, m)
+      const res = await sendWithDeadline(ctx, { text: mailText(rule, m) + att.note, files: att.files, model: rule.model })
       if (res.ok) {
         item.sessionId = res.sessionId
         item.status = "done"
@@ -157,7 +241,8 @@ async function dispatch(ctx: HostContext, rule: MailRule, m: MailMessage): Promi
       }
     } else {
       // ai-review-reply: draft only — never sends here.
-      const res = await ctx.native.chat.send({ text: mailText(prompt, m), directory: rule.directory, model: rule.model })
+      const att = await attachmentFiles(ctx, rule, m)
+      const res = await sendWithDeadline(ctx, { text: mailText(rule, m) + att.note, files: att.files, model: rule.model })
       if (res.ok) {
         item.draft = res.reply ?? ""
         item.sessionId = res.sessionId
@@ -192,12 +277,22 @@ function scan(ctx: HostContext, force: boolean): Promise<MailScanRes> {
 
 async function doScan(ctx: HostContext, force: boolean): Promise<MailScanRes> {
   const st = ensureState(ctx)
-  const rules = parseRules(ctx).filter((r) => r.enabled)
+  const allRules = parseRules(ctx)
+  const rules = allRules.filter((r) => r.enabled)
   const maxPerScan = Math.max(1, Number(ctx.config().maxPerScan ?? 5))
   let scanned = 0
   let matched = 0
   const errors: string[] = []
   const newItems: MailQueueItem[] = []
+
+  // Prune processed-sets for rules that no longer exist — the panel mints a fresh
+  // id per created rule, so delete-and-recreate cycles would otherwise accumulate
+  // orphan 300-entry baselines in mailflow-state.json forever. Keyed on ALL rules
+  // (not just enabled) so toggling a rule off keeps its baseline.
+  const liveRuleIds = new Set(allRules.map((r) => r.id))
+  for (const k of Object.keys(st.processed)) {
+    if (!liveRuleIds.has(k)) delete st.processed[k]
+  }
 
   for (const rule of rules) {
     const list = await ctx.native.outlookList({ folder: rule.folder, top: 30, unreadOnly: rule.match?.unreadOnly })
@@ -275,26 +370,25 @@ export const mailflowCapability: Capability = {
         default: 5,
         help: "限流:防止规则刚建立或长时间未扫时一次性触发大量邮件。",
       },
-      {
-        key: "rulesJson",
-        label: "规则(JSON)",
-        type: "string",
-        default: "[]",
-        help: '建议在「邮件工作流」面板里可视化编辑;此处是底层 JSON 数组。',
-      },
+      // NOTE: rulesJson is still persisted under capabilities.mailflow (the
+      // 邮件工作流 panel edits it), it's just no longer surfaced in 管理 —
+      // capConfig keeps persisted keys that aren't in the schema.
     ],
   },
 
-  // The agent's read-mail tool lives here too (one "邮件" capability instead of a
+  // The agent's mail tools live here too (one "邮件" capability instead of a
   // separate outlook one), so the management page shows a single mail card.
+  // Chain: outlook_search (find, returns entryId) → outlook_read (full body /
+  // thread) → outlook_attachments (files saved where the WSL agent can read).
   tools: [
     {
       name: "outlook_search",
       description:
         "Read the user's classic Outlook inbox on their Windows host. Returns recent emails " +
-        "(subject, sender, time, unread, a short preview), optionally filtered by a keyword matched " +
-        "against subject/sender. Use to summarize mail, find a message, or pull context the user " +
-        "refers to. Read-only.",
+        "(subject, sender, time, unread, a short preview, and an entryId), optionally filtered by a " +
+        "keyword matched against subject/sender. The entryId is the handle for follow-ups: pass it to " +
+        "outlook_read for the FULL body / conversation history, or to outlook_attachments to fetch " +
+        "attachments. Read-only.",
       inputSchema: {
         type: "object",
         properties: {
@@ -308,6 +402,62 @@ export const mailflowCapability: Capability = {
         const tag = r.mock ? "(mock 数据,非 Windows 环境)\n" : ""
         const mails = r.mails ?? []
         return { text: tag + (mails.length ? JSON.stringify(mails, null, 2) : "没有匹配的邮件。") }
+      },
+    },
+    {
+      name: "outlook_read",
+      description:
+        "Read ONE Outlook email in FULL: complete body (not the 200-char preview), recipients, and its " +
+        "attachment list. Identify the mail by entryId (from outlook_search) or by folder + subject " +
+        "keyword (first match). Set thread=true to also list the other mails of the same conversation " +
+        "(the back-and-forth history). Read-only.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          entryId: { type: "string", description: "MAPI EntryID from outlook_search (preferred)." },
+          folder: { type: "string", description: 'Folder path like "收件箱\\\\Bugzilla" (used with subjectContains; empty = Inbox).' },
+          subjectContains: { type: "string", description: "Subject keyword — first matching mail is read (when no entryId)." },
+          thread: { type: "boolean", description: "Also list same-conversation mails (≤10, newest first)." },
+        },
+      },
+      handler: async (args, ctx) => {
+        const r = await ctx.native.outlookRead({
+          entryId: args?.entryId ? String(args.entryId) : undefined,
+          folder: args?.folder ? String(args.folder) : undefined,
+          subjectContains: args?.subjectContains ? String(args.subjectContains) : undefined,
+          thread: args?.thread === true,
+        })
+        if (!r.ok) return { text: `读取邮件失败:${r.error}`, isError: true }
+        if (r.mock) return { text: "(mock:非 Windows 环境,无邮件内容)" }
+        if (!r.mail) return { text: "没有找到匹配的邮件。" }
+        return { text: JSON.stringify({ mail: r.mail, thread: r.thread ?? [] }, null, 2) }
+      },
+    },
+    {
+      name: "outlook_attachments",
+      description:
+        "Save an Outlook email's attachments to disk and return their file paths (both the Windows " +
+        "path and the WSL /mnt/... path). You can then READ the files directly with your own tools. " +
+        "Identify the mail by entryId (from outlook_search / outlook_read).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          entryId: { type: "string", description: "MAPI EntryID of the mail whose attachments to save." },
+        },
+        required: ["entryId"],
+      },
+      handler: async (args, ctx) => {
+        const entryId = String(args?.entryId ?? "")
+        const dir = attachmentSaveDir(entryId)
+        const r = await ctx.native.outlookSaveAttachments(entryId, dir)
+        if (!r.ok) return { text: `保存附件失败:${r.error}`, isError: true }
+        const files = (r.files ?? []).map((f) => ({
+          name: f.name,
+          size: f.size,
+          winPath: f.winPath,
+          wslPath: winPathToWsl(f.winPath),
+        }))
+        return { text: files.length ? JSON.stringify(files, null, 2) : "该邮件没有附件。" }
       },
     },
   ],

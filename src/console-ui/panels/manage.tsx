@@ -14,26 +14,14 @@ import { createMemo, createSignal, For, Show, onMount, onCleanup } from "solid-j
 import { registerPanel } from "../../panels/registry"
 import { api } from "../../panels/bridge"
 import { Icon } from "../../panels/icons"
+import { RefineModel } from "../../panels/panels/exp/refine-model"
 import type { CapabilityInfo, ConfigField, GlobalConfig, HostEvent, ModelInfo } from "../../panels/global"
 import "./manage.css"
-
-/** Parse the path-map textarea ("WIN=>LINUX" per line) into the config shape. */
-function parsePathMaps(text: string): Array<{ from: string; to: string }> {
-  return text
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .map((l) => {
-      const i = l.indexOf("=>")
-      return i < 0 ? null : { from: l.slice(0, i).trim(), to: l.slice(i + 2).trim() }
-    })
-    .filter((m): m is { from: string; to: string } => !!m && !!m.from && !!m.to)
-}
 
 /** Capability id → Lucide icon (replaces the emoji each capability registered). */
 const CAP_ICON: Record<string, string> = {
   chat: "message-square",
-  outlook: "mail",
+  mailflow: "mail",
   notify: "bell",
   exp: "share-2",
   clipboard: "paperclip",
@@ -151,22 +139,16 @@ function ManagePanel() {
   return (
     <div class="panel">
       <div class="panel-head">
-        <div class="ph-title">
-          <span class="ph-icon">
-            <Icon name="settings" size={17} />
+        <h2 class="ph-name">管理</h2>
+        <div class="ph-tools">
+          <span
+            class="mg-health"
+            data-state={healthy() === undefined ? "unknown" : healthy() ? "online" : "offline"}
+          >
+            <span class="mg-dot" />
+            {healthy() === undefined ? "检测中…" : healthy() ? "在线" : "离线"}
           </span>
-          <div>
-            <h2>管理 · win-host</h2>
-            <div class="sub">能力开关 · 配置 · agent 工具清单</div>
-          </div>
         </div>
-        <span
-          class="mg-health"
-          data-state={healthy() === undefined ? "unknown" : healthy() ? "online" : "offline"}
-        >
-          <span class="mg-dot" />
-          {healthy() === undefined ? "检测中…" : healthy() ? "在线" : "离线"}
-        </span>
       </div>
 
       <div class="panel-body">
@@ -248,7 +230,10 @@ function ManagePanel() {
                   </label>
                   <div class="mg-row">
                     <label class="mg-field">
-                      <span class="mg-field-label">全局热键</span>
+                      <span class="mg-field-label">
+                        全局热键
+                        <Hint text="改热键即时生效;改端口需重启 host。" />
+                      </span>
                       <input value={c.hotkey} onChange={(e) => patchGlobal({ hotkey: e.currentTarget.value })} />
                     </label>
                     <label class="mg-field mg-narrow">
@@ -260,19 +245,6 @@ function ManagePanel() {
                       />
                     </label>
                   </div>
-                  <label class="mg-field">
-                    <span class="mg-field-label">
-                      路径映射(每行 Windows前缀=&gt;Linux前缀)
-                      <Hint text="改热键即时生效;改端口需重启 host。对话框「工作目录」填 Windows 路径会按此映射转成 Linux 路径供 opencode 访问。" />
-                    </span>
-                    <textarea
-                      class="mg-textarea"
-                      rows="2"
-                      placeholder={"D:\\proj=>/media/sf_proj   (VirtualBox 共享盘)\n留空 = 盘符自动映射到 WSL 的 /mnt/<盘>"}
-                      value={(c.pathMaps ?? []).map((m) => m.from + "=>" + m.to).join("\n")}
-                      onChange={(e) => patchGlobal({ pathMaps: parsePathMaps(e.currentTarget.value) })}
-                    />
-                  </label>
                 </div>
               </section>
             )}
@@ -313,19 +285,24 @@ function ManagePanel() {
                           </Show>
                         </span>
                       </div>
-                      <label class="mg-switch">
-                        <input
-                          type="checkbox"
-                          checked={cap.enabled}
-                          onChange={(e) => toggleCap(cap.id, e.currentTarget.checked)}
-                        />
-                        <span class="mg-switch-track">
-                          <span class="mg-switch-thumb" />
-                        </span>
-                        <span class="mg-switch-text" data-on={cap.enabled}>
-                          {cap.enabled ? "启用" : "停用"}
-                        </span>
-                      </label>
+                      {/* Built-ins are always on (they're all load-bearing — the
+                          on/off switches were config noise). External plugins keep
+                          the switch: they come and go and can misbehave. */}
+                      <Show when={cap.external}>
+                        <label class="mg-switch">
+                          <input
+                            type="checkbox"
+                            checked={cap.enabled}
+                            onChange={(e) => toggleCap(cap.id, e.currentTarget.checked)}
+                          />
+                          <span class="mg-switch-track">
+                            <span class="mg-switch-thumb" />
+                          </span>
+                          <span class="mg-switch-text" data-on={cap.enabled}>
+                            {cap.enabled ? "启用" : "停用"}
+                          </span>
+                        </label>
+                      </Show>
                     </div>
 
                     <Show when={cap.tools.length > 0}>

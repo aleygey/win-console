@@ -8,12 +8,12 @@ import "../panels/styles/tokens.css"
 import "../panels/styles/app.css"
 import "./console.css"
 
-// Side-effect imports: each registers one panel on load.
-import "../panels/panels/chat"
-// 邮件(收件箱列表)前端已下线 — 用户直接用 Outlook 查看;agent 仍可通过 outlook_search
-// MCP 工具读邮件,邮件自动化走「邮件工作流」面板。
+// Side-effect imports: each registers one panel on load. IMPORT ORDER = rail
+// order, and the FIRST import is the default landing panel.
+// 对话面板已下线 — Ctrl+Space 快速对话框是唯一输入面;控制台里换成只读的会话监控。
+// 通知测试面板已下线 — notify 能力本身保留(mailflow/桌面通知插件/MCP 工具在用)。
+import "../panels/panels/sessions"
 import "../panels/panels/mailflow"
-import "../panels/panels/notify"
 import "../panels/panels/exp"
 import "./panels/manage"
 

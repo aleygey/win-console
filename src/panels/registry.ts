@@ -5,7 +5,7 @@
  * left-rail item each and calls the active panel's render() on the right.
  *
  * Registration is a side effect of importing a panel module (e.g.
- * `import "./panels/chat"`), which calls registerPanel at module load. Adding a
+ * `import "./panels/sessions"`), which calls registerPanel at module load. Adding a
  * plugin = write a panel module that calls registerPanel, then import it once in
  * App.tsx — a new rail item appears automatically, no other wiring.
  */

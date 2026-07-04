@@ -12,7 +12,7 @@ import { createSignal, For, Index, Show, onMount } from "solid-js"
 import { registerPanel } from "../../registry"
 import { api } from "../../bridge"
 import { Icon } from "../../icons"
-import type { MailRule, MailQueueItem, MailActionKind } from "../../global"
+import type { MailInclude, MailRule, MailQueueItem, MailActionKind } from "../../global"
 import "./mailflow.css"
 
 const ACTIONS: { value: MailActionKind; label: string; icon: string; hint: string }[] = [
@@ -189,19 +189,13 @@ function MailflowPanel() {
   return (
     <div class="panel">
       <div class="panel-head">
-        <div class="ph-title">
-          <span class="ph-icon">
-            <Icon name="mail" size={17} />
-          </span>
-          <div>
-            <h2>邮件工作流</h2>
-            <div class="sub">规则驱动 · 触发会话 / AI 起草回复(审核后发送)</div>
-          </div>
+        <h2 class="ph-name">邮件工作流</h2>
+        <div class="ph-tools">
+          <button class="mf-scan" disabled={busy()} onClick={scan}>
+            <Icon name="refresh-cw" size={15} />
+            {busy() ? "扫描中…" : "立即扫描"}
+          </button>
         </div>
-        <button class="mf-scan" disabled={busy()} onClick={scan}>
-          <Icon name="refresh-cw" size={15} />
-          {busy() ? "扫描中…" : "立即扫描"}
-        </button>
       </div>
 
       <div class="panel-body">
@@ -427,24 +421,49 @@ function MailflowPanel() {
                     </div>
 
                     <label class="mf-field">
-                      <span class="mf-label">工作目录(可空,触发会话用)</span>
-                      <input
-                        value={rule().directory ?? ""}
-                        placeholder="如 D:\\proj\\foo(自动映射到 WSL)"
-                        onInput={(e) => patchRule(i, { directory: e.currentTarget.value })}
-                      />
-                    </label>
-
-                    <label class="mf-field">
-                      <span class="mf-label">Prompt 模板(可空用默认 · 占位 {"{subject} {from} {body} {received}"})</span>
+                      <span class="mf-label">任务指令(可空用默认;邮件内容按下面勾选自动附上,无需写占位符)</span>
                       <textarea
                         class="mf-prompt"
                         rows={3}
                         value={rule().prompt ?? ""}
-                        placeholder="留空使用内置 prompt(会把邮件主题/正文填进去)"
+                        placeholder="例:这是一封 Bugzilla 通知,请分析 bug 并给出修复建议"
                         onInput={(e) => patchRule(i, { prompt: e.currentTarget.value })}
                       />
                     </label>
+
+                    {/* 邮件信息勾选 — 替代旧的 {subject}/{body} 占位符:勾了什么,
+                        派发时就把什么以结构化块 / 附件形式附在指令后面 */}
+                    <div class="mf-field">
+                      <span class="mf-label">随指令附上的邮件信息</span>
+                      <div class="mf-include">
+                        <For
+                          each={[
+                            ["subject", "标题"],
+                            ["from", "发件人"],
+                            ["received", "时间"],
+                            ["body", "正文"],
+                            ["attachments", "附件"],
+                          ] as Array<[keyof MailInclude, string]>}
+                        >
+                          {([key, label]) => (
+                            <label class="mf-check" title={key === "attachments" ? "经 Outlook 提取邮件附件并随指令发给 agent(单个≤4MB,总量≤10MB)" : undefined}>
+                              <input
+                                type="checkbox"
+                                checked={
+                                  key === "attachments"
+                                    ? rule().include?.attachments === true
+                                    : rule().include?.[key] !== false
+                                }
+                                onChange={(e) =>
+                                  patchRule(i, { include: { ...rule().include, [key]: e.currentTarget.checked } })
+                                }
+                              />
+                              {label}
+                            </label>
+                          )}
+                        </For>
+                      </div>
+                    </div>
 
                     <div class="mf-editor-foot">
                       <button class="mf-link" onClick={() => preview(rule())}>

@@ -11,13 +11,13 @@
  *   POST /cap/chat/delete   { sessionId }                             → { ok }
  *   POST /cap/chat/reset    { sessionId? }                            → { ok }
  */
-import type { Capability, ChatSendReq } from "../../contracts"
+import type { Capability, ChatAskReply, ChatSendReq } from "../../contracts"
 
 export const chatCapability: Capability = {
   id: "chat",
   title: "对话",
   icon: "💬",
-  description: "完整 opencode 会话客户端:会话/模型切换、历史、撤销。Ctrl+Space 唤起。",
+  description: "opencode 会话后端:发送(Ctrl+Space 快速对话)、会话监控、历史、撤销。",
   hasPanel: true,
   routes: [
     {
@@ -31,6 +31,19 @@ export const chatCapability: Capability = {
       handler: async (req, ctx) => ({
         body: await ctx.native.chat.createSession((req.body as { directory?: string })?.directory),
       }),
+    },
+    {
+      method: "GET",
+      path: "/monitor",
+      handler: async (req, ctx) => {
+        const limit = Number(req.query.get("limit") ?? "") || undefined
+        return { body: { ok: true, entries: await ctx.native.chat.monitor(limit) } }
+      },
+    },
+    {
+      method: "POST",
+      path: "/ask-reply",
+      handler: async (req, ctx) => ({ body: await ctx.native.chat.replyAsk((req.body ?? {}) as ChatAskReply) }),
     },
     {
       method: "GET",

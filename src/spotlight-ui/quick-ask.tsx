@@ -12,14 +12,11 @@
  * prompt so the agent can open them.
  */
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js"
-import { marked } from "marked"
 import { api } from "../panels/bridge"
 import { Icon } from "../panels/icons"
+import { md } from "../panels/md"
 import { buildAttachmentPayload, readFiles, type Attachment } from "../panels/attach"
 import type { ChatMsg, ModelInfo, ModelRef } from "../panels/global"
-
-marked.setOptions({ gfm: true, breaks: true })
-const md = (t: string) => marked.parse(t, { async: false }) as string
 
 const LS_MODEL = "winhost-spotlight-model"
 
@@ -89,25 +86,31 @@ export function QuickAsk() {
     }
   }
 
-  onMount(async () => {
-    try {
-      setModels(await api.chat.models())
-    } catch {
-      /* no models yet */
-    }
-    if (!model()) {
-      const m = models().find((x) => x.connected) ?? models()[0]
-      if (m) setModel({ providerID: m.providerID, modelID: m.modelID })
-    }
+  onMount(() => {
+    // Synchronous listener registrations FIRST: onCleanup after an `await` in an
+    // async onMount is a silent no-op (Solid's owner is gone by then), so the
+    // subscriptions must happen before any await.
+    // Catch paste anywhere in the popup (not just the textarea) so a copied
+    // screenshot / file drops in even if focus drifted.
+    document.addEventListener("paste", onPaste)
+    onCleanup(() => document.removeEventListener("paste", onPaste))
     // Refocus the input every time the hotkey re-shows the window.
     window.winhost?.onShown?.(() => queueMicrotask(() => inputEl?.focus()))
     inputEl?.focus()
     autoGrow()
     fitWindow()
-    // Catch paste anywhere in the popup (not just the textarea) so a copied
-    // screenshot drops in even if focus drifted.
-    document.addEventListener("paste", onPaste)
-    onCleanup(() => document.removeEventListener("paste", onPaste))
+
+    void (async () => {
+      try {
+        setModels(await api.chat.models())
+      } catch {
+        /* no models yet */
+      }
+      if (!model()) {
+        const m = models().find((x) => x.connected) ?? models()[0]
+        if (m) setModel({ providerID: m.providerID, modelID: m.modelID })
+      }
+    })()
   })
 
   function autoGrow() {
@@ -121,18 +124,14 @@ export function QuickAsk() {
     setAttachments((a) => [...a, ...atts])
   }
 
+  /** Paste ANY file — a screenshot from the clipboard, or files copied in the
+   *  Explorer (Ctrl+C on a file → Ctrl+V here). clipboardData.files carries
+   *  both; plain-text pastes have no files and fall through to the textarea. */
   function onPaste(e: ClipboardEvent) {
-    const items = e.clipboardData?.items
-    if (!items) return
-    for (const it of Array.from(items)) {
-      if (it.type.startsWith("image/")) {
-        const f = it.getAsFile()
-        if (f) {
-          e.preventDefault()
-          addFiles([f])
-          return
-        }
-      }
+    const fs = e.clipboardData?.files
+    if (fs && fs.length > 0) {
+      e.preventDefault()
+      void addFiles(fs)
     }
   }
 
@@ -174,12 +173,15 @@ export function QuickAsk() {
 
     // try/finally so a thrown/hung send NEVER leaves busy stuck (which blocked
     // all later sends); a timeout unblocks the UI if the agent run is very long.
+    // The timer is CLEARED in finally — otherwise every send leaks a 3-minute
+    // timer (and its closure) even after the reply arrived / the popup hid.
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
     try {
       const res = await Promise.race([
         api.chat.send({ text: fullText, files, sessionId: sessionId(), model: model() }),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("超时 —— 任务可能还在跑,去控制台「对话」面板继续看")), 180_000),
-        ),
+        new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error("超时 —— 任务可能还在跑,去控制台「会话监控」面板继续看")), 180_000)
+        }),
       ])
       if (!res.ok) setMsgs((m) => [...m, { role: "system", text: `⚠ ${res.error ?? "发送失败"}` }])
       else {
@@ -189,6 +191,7 @@ export function QuickAsk() {
     } catch (e) {
       setMsgs((m) => [...m, { role: "system", text: `⚠ ${e instanceof Error ? e.message : String(e)}` }])
     } finally {
+      if (timeoutId) clearTimeout(timeoutId)
       setBusy(false)
       scrollDown()
     }

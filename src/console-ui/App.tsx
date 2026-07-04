@@ -20,12 +20,13 @@ import type { CapabilityInfo, GlobalConfig, HostEvent } from "../panels/global"
 
 /** Map panel id → Lucide icon name (replaces the emoji each panel registered). */
 const RAIL_ICON: Record<string, string> = {
-  chat: "message-square",
-  outlook: "mail",
-  notify: "bell",
+  sessions: "activity",
+  mailflow: "mail",
   exp: "share-2",
   manage: "settings",
 }
+
+const LS_RAIL_COLLAPSED = "winhost-rail-collapsed"
 
 /** Rail glyph for a panel: known built-ins first, then a plugin's own Lucide
  *  name (if it looks like one), else a generic plug. */
@@ -52,19 +53,25 @@ export default function App(props: { expClient?: ExpClient }): JSX.Element {
   // the keyed <Show> below would tear down and RELOAD the active iframe on every
   // refresh (losing the plugin page's scroll/input/stream state).
   const panelCache = new Map<string, Panel>()
-  const externalPanels = createMemo<Panel[]>(() =>
-    extCaps()
+  const externalPanels = createMemo<Panel[]>(() => {
+    const live = new Set<string>()
+    const out = extCaps()
       .filter((c) => c.external && c.enabled && c.panel?.url)
       .map((c) => {
         const key = `${c.id}|${c.panel!.url}`
+        live.add(key)
         let p = panelCache.get(key)
         if (!p) {
           p = { id: c.id, title: c.title, icon: c.icon, render: () => <IframePanel id={c.id} title={c.title} url={c.panel!.url} /> }
           panelCache.set(key, p)
         }
         return p
-      }),
-  )
+      })
+    // Evict entries for plugins that unregistered or changed URL — otherwise the
+    // cache grows forever against churning plugins (fresh port per restart).
+    for (const k of panelCache.keys()) if (!live.has(k)) panelCache.delete(k)
+    return out
+  })
 
   // When the active panel's capability is toggled off in 管理 it leaves the rail;
   // show an explanation instead of the generic empty state.
@@ -86,6 +93,19 @@ export default function App(props: { expClient?: ExpClient }): JSX.Element {
     initial && panels().some((p) => p.id === initial) ? initial : panels()[0]?.id,
   )
   const [cfg, setCfg] = createSignal<GlobalConfig | undefined>()
+  // Collapsible rail: icons-only, persisted. Requested because inside Obsidian
+  // the screen splits into too many vertical columns (folders → note → console
+  // rail → panel) — collapsing the rail buys the content column back.
+  const [railCollapsed, setRailCollapsed] = createSignal(localStorage.getItem(LS_RAIL_COLLAPSED) === "1")
+  const toggleRail = () => {
+    const v = !railCollapsed()
+    setRailCollapsed(v)
+    try {
+      localStorage.setItem(LS_RAIL_COLLAPSED, v ? "1" : "0")
+    } catch {
+      /* ignore */
+    }
+  }
 
   // ── Rail count badge ──────────────────────────────────────────────────────
   // 经验库: pending-review experiences from the exp backend (playbookUrl).
@@ -105,21 +125,17 @@ export default function App(props: { expClient?: ExpClient }): JSX.Element {
     }
   }
 
-  onMount(async () => {
-    // Deep-link: the Obsidian iframe sets #panel=chat to honour the summon hotkey.
+  onMount(() => {
+    // ALL subscriptions registered synchronously: an onCleanup placed after an
+    // `await` in an async onMount silently no-ops (Solid's owner is gone), so
+    // the SSE unsubscribe would never actually be registered.
+    // Deep-link: #panel=<id> switches the active panel (Obsidian commands use it).
     const onHash = () => {
       const p = panelFromHash()
       if (p && panels().some((x) => x.id === p)) setActiveId(p)
     }
     window.addEventListener("hashchange", onHash)
     onCleanup(() => window.removeEventListener("hashchange", onHash))
-
-    try {
-      setCfg(await api.getConfig())
-    } catch {
-      /* daemon not up yet */
-    }
-    void loadCaps()
 
     // Live rail: a plugin registering/unregistering (or being toggled in 管理)
     // re-renders the rail with no reload.
@@ -131,33 +147,51 @@ export default function App(props: { expClient?: ExpClient }): JSX.Element {
     })
     onCleanup(off)
 
-    // Best-effort pending-review count for 经验库.
-    try {
-      const client = props.expClient ?? createClient(resolveBaseUrl())
-      const overview = await client.get<RefinerOverview>("/refiner/overview?limit=5000")
-      const pending = (overview.experiences ?? []).filter((e) => e.review_status === "pending").length
-      setExpPending(pending)
-    } catch {
-      /* exp backend unreachable → no badge */
-    }
+    // Async data loads AFTER the subscriptions are safely owned.
+    void (async () => {
+      try {
+        setCfg(await api.getConfig())
+      } catch {
+        /* daemon not up yet */
+      }
+      void loadCaps()
+
+      // Best-effort pending-review count for 经验库.
+      try {
+        const client = props.expClient ?? createClient(resolveBaseUrl())
+        const overview = await client.get<RefinerOverview>("/refiner/overview?limit=5000")
+        const pending = (overview.experiences ?? []).filter((e) => e.review_status === "pending").length
+        setExpPending(pending)
+      } catch {
+        /* exp backend unreachable → no badge */
+      }
+    })()
   })
 
   const activePanel = createMemo(() => panels().find((p) => p.id === activeId()))
 
   return (
     <ExpClientProvider client={props.expClient}>
-      <div class="shell">
+      <div class="shell" data-collapsed={railCollapsed()}>
         <nav class="rail" aria-label="插件列表">
           <div class="rail-head">
             <div class="rail-brand">
               <span class="rail-mark" aria-hidden="true">
                 <Icon name="cpu" size={16} />
               </span>
-              <div>
+              <div class="rail-brand-text">
                 <div class="rail-title">opencode</div>
                 <div class="rail-sub">Win Host</div>
               </div>
             </div>
+            <button
+              type="button"
+              class="rail-collapse"
+              title={railCollapsed() ? "展开导航栏" : "收起导航栏(只留图标)"}
+              onClick={toggleRail}
+            >
+              <Icon name="panel-left" size={15} />
+            </button>
           </div>
           <div class="rail-section">插件</div>
           <For each={panels()}>
@@ -166,6 +200,7 @@ export default function App(props: { expClient?: ExpClient }): JSX.Element {
                 type="button"
                 class="rail-item"
                 data-active={panel.id === activeId()}
+                title={railCollapsed() ? panel.title : undefined}
                 onClick={() => setActiveId(panel.id)}
               >
                 <span class="rail-icon" aria-hidden="true">

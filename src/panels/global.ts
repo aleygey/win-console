@@ -6,6 +6,12 @@
 export type {
   ChatSendReq,
   ChatSendRes,
+  ChatMonitorEntry,
+  ChatPendingAsk,
+  ChatQuestionInfo,
+  ChatQuestionOption,
+  ChatAskReply,
+  MailInclude,
   ChatMsg,
   ChatPart,
   ChatToolStatus,

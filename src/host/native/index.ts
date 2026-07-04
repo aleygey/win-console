@@ -6,7 +6,15 @@
  */
 import type { GlobalConfig, NativeHost } from "../../contracts"
 import { showToast } from "./notify"
-import { outlookSearch, outlookList, outlookReply, outlookFolders } from "./outlook"
+import {
+  outlookSearch,
+  outlookList,
+  outlookReply,
+  outlookFolders,
+  outlookAttachments,
+  outlookRead,
+  outlookSaveAttachments,
+} from "./outlook"
 import { readImageDataUrl } from "./clipboard"
 import { createChat } from "../chat"
 
@@ -18,6 +26,9 @@ export function createNativeHost(getConfig: () => GlobalConfig): NativeHost {
     outlookList,
     outlookReply,
     outlookFolders,
+    outlookAttachments,
+    outlookRead,
+    outlookSaveAttachments,
     clipboardImage: async () => readImageDataUrl(),
     chat: createChat(getConfig),
   }

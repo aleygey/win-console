@@ -1,12 +1,13 @@
 /**
  * WinHostClient over HTTP/SSE — the front-end half of the seam. Every front-end
  * (Obsidian, console, spotlight) talks to the daemon through one of these, built
- * from a base URL. It implements the same conveniences (chat/outlook/notify/
+ * from a base URL. It implements the same conveniences (chat/notify/
  * clipboard) the old preload exposed, so the carried-over panels are a drop-in,
  * plus generic call/read/events any future capability uses with no client edit.
  */
 import type {
   CapabilityInfo,
+  ChatMonitorEntry,
   ChatMsg,
   ChatSendRes,
   ChatSession,
@@ -14,7 +15,6 @@ import type {
   HostEvent,
   ModelInfo,
   NotifyRes,
-  OutlookSearchRes,
   WinHostClient,
 } from "../contracts"
 
@@ -52,6 +52,9 @@ export function createWinHostClient(baseUrl: string, platform = "web"): WinHostC
       send: (req) => jpost<ChatSendRes>("/cap/chat/send", req),
       createSession: (directory) =>
         jpost<{ ok: boolean; sessionId?: string; error?: string }>("/cap/chat/create", { directory }),
+      monitor: async (limit) =>
+        (await jget<{ entries: ChatMonitorEntry[] }>("/cap/chat/monitor" + (limit ? `?limit=${limit}` : ""))).entries ?? [],
+      replyAsk: (req) => jpost<{ ok: boolean; error?: string }>("/cap/chat/ask-reply", req),
       reset: (sessionId) => jpost<{ ok: boolean }>("/cap/chat/reset", { sessionId }),
       sessions: async () => (await jget<{ sessions: ChatSession[] }>("/cap/chat/sessions")).sessions ?? [],
       history: async (id) => (await jget<{ messages: ChatMsg[] }>(`/cap/chat/history?id=${encodeURIComponent(id)}`)).messages ?? [],
@@ -60,7 +63,6 @@ export function createWinHostClient(baseUrl: string, platform = "web"): WinHostC
       undo: (id) => jpost<{ ok: boolean; error?: string }>("/cap/chat/undo", { sessionId: id }),
       deleteSession: (id) => jpost<{ ok: boolean; error?: string }>("/cap/chat/delete", { sessionId: id }),
     },
-    outlook: { search: (req) => jpost<OutlookSearchRes>("/cap/outlook/search", req) },
     notify: { test: (req) => jpost<NotifyRes>("/cap/notify/test", req) },
     clipboard: {
       image: async () => (await jget<{ dataUrl: string | null }>("/cap/clipboard/image")).dataUrl,

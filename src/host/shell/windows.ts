@@ -20,6 +20,13 @@ const selfArg = (port: number) => [`--winhost-url=http://127.0.0.1:${port}`]
 export const SPOTLIGHT_WIDTH = 660
 export const SPOTLIGHT_COLLAPSED_H = 58
 
+/** Spotlight width scales with the display so it doesn't feel cramped on 4K:
+ *  ~38% of the work-area width, clamped to [660, 1040]. Recomputed on every show
+ *  for the display the cursor is on (mixed-DPI multi-monitor safe). */
+function spotlightWidthFor(workAreaWidth: number): number {
+  return Math.round(Math.min(1040, Math.max(SPOTLIGHT_WIDTH, workAreaWidth * 0.38)))
+}
+
 export function makeConsoleWindow(port: number): BrowserWindow {
   const win = new BrowserWindow({
     width: 980,
@@ -101,17 +108,20 @@ export function toggleSpotlight(win: BrowserWindow): void {
 
 /** Center the popup horizontally, upper-third vertically (Spotlight-style), on
  *  the display the cursor is on — a fixed, predictable spot (the user can drag it
- *  from there). Leaves room below for the answer to grow into. */
+ *  from there). Width adapts to the display (wider on 4K); leaves room below for
+ *  the answer to grow into. */
 export function positionSpotlightCentered(win: BrowserWindow): void {
   const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea
-  const [w] = win.getSize()
+  const w = spotlightWidthFor(wa.width)
+  const [, h] = win.getSize()
   const x = Math.round(wa.x + (wa.width - w) / 2)
   const y = Math.round(wa.y + wa.height * 0.22)
-  win.setPosition(x, y)
+  win.setBounds({ x, y, width: w, height: h })
 }
 
 /** Grow/shrink the popup as the answer expands, keeping the bar anchored where it
- *  is (grows downward; nudges up if it would clip the work-area bottom). */
+ *  is (grows downward; nudges up if it would clip the work-area bottom). Width is
+ *  whatever positionSpotlightCentered picked for this display — don't reset it. */
 export function resizeSpotlight(win: BrowserWindow, height: number): void {
   if (win.isDestroyed()) return
   const b = win.getBounds()
@@ -119,7 +129,7 @@ export function resizeSpotlight(win: BrowserWindow, height: number): void {
   const h = Math.max(SPOTLIGHT_COLLAPSED_H, Math.round(height))
   let y = b.y
   if (y + h > wa.y + wa.height) y = Math.max(wa.y, wa.y + wa.height - h)
-  win.setBounds({ x: b.x, y, width: SPOTLIGHT_WIDTH, height: h })
+  win.setBounds({ x: b.x, y, width: b.width, height: h })
 }
 
 export function showWindow(win: BrowserWindow): void {

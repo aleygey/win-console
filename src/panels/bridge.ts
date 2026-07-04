@@ -59,6 +59,8 @@ export const api: WinHostClient = {
   chat: {
     send: (r) => client.chat.send(r),
     createSession: (dir) => client.chat.createSession(dir),
+    monitor: (limit) => client.chat.monitor(limit),
+    replyAsk: (r) => client.chat.replyAsk(r),
     reset: (k) => client.chat.reset(k),
     sessions: () => client.chat.sessions(),
     history: (id) => client.chat.history(id),
@@ -66,7 +68,6 @@ export const api: WinHostClient = {
     undo: (id) => client.chat.undo(id),
     deleteSession: (id) => client.chat.deleteSession(id),
   },
-  outlook: { search: (r) => client.outlook.search(r) },
   notify: { test: (r) => client.notify.test(r) },
   clipboard: { image: () => client.clipboard.image() },
 }

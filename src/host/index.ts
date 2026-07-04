@@ -3,9 +3,8 @@
  *
  *   1. boots the config store, event bus, native host, capability registry,
  *      and the HTTP/SSE/MCP server (the same core the smoke test exercises),
- *   2. registers the global hotkey with the POLICY the user chose:
- *        Obsidian running → raise it + emit "summon:chat" (the plugin opens chat)
- *        otherwise        → show the spotlight popup,
+ *   2. registers the global hotkey (always toggles the spotlight quick-ask popup
+ *      — the ONLY input surface; the console's 会话监控 is read-only),
  *   3. puts a minimal tray up (open console / quick chat / quit),
  *   4. re-registers the hotkey live when the console edits it (config:changed).
  *

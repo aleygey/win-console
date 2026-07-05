@@ -957,22 +957,21 @@ function ExperienceCard(props: {
       {/* title is the hero — full, no clamping */}
       <h3 class="el-card-title">{e().title || "（无标题）"}</h3>
 
-      {/* full abstract, markdown-rendered (inline code, lists, …) */}
-      <Show when={e().abstract?.trim()}>
-        <div class="el-card-abstract el-md" innerHTML={md(e().abstract)} onClick={onMdClick} />
+      {/* body: the experience content (detail under the new contract; legacy
+          items fall back to abstract). Full markdown, no clamping. */}
+      <Show when={(e().detail?.trim() || e().abstract)?.trim()}>
+        <div
+          class="el-card-abstract el-md"
+          innerHTML={md(e().detail?.trim() || e().abstract)}
+          onClick={onMdClick}
+        />
       </Show>
 
-      {/* footer — obs · detail · usage · (scope) · time, quiet mono */}
+      {/* footer — obs · usage · (scope) · time, quiet mono */}
       <div class="el-card-meta">
         <span class="el-meta-item">
           <b>{obsCount()}</b> obs
         </span>
-        <Show when={e().detail?.trim()}>
-          <span class="el-meta-item el-meta-detail" title="包含完整步骤正文（详情见卡片）">
-            <Icon name="file-text" size={11} />
-            详情
-          </span>
-        </Show>
         <Show when={cited() > 0}>
           <span class="el-meta-item el-use" title="judge 判定被采用的次数">
             ✓<b>{cited()}</b>
@@ -1242,21 +1241,24 @@ function DetailModal(props: {
                     </div>
                   </Show>
 
-                  {/* Abstract — short gist, markdown-rendered */}
-                  <section class="el-sec">
-                    <span class="el-sec-label">摘要 · Abstract</span>
-                    <Show
-                      when={e().abstract?.trim()}
-                      fallback={<p class="el-empty-inline">（无摘要）</p>}
-                    >
-                      <div class="el-prose el-md" innerHTML={md(e().abstract)} onClick={onMdClick} />
-                    </Show>
-                  </section>
-
-                  {/* Detail — the full multi-step body, when present */}
-                  <Show when={e().detail?.trim()}>
+                  {/* Body — detail is the content under the new contract;
+                      legacy items without one show their abstract instead. */}
+                  <Show
+                    when={e().detail?.trim()}
+                    fallback={
+                      <section class="el-sec">
+                        <span class="el-sec-label">摘要 · Abstract</span>
+                        <Show
+                          when={e().abstract?.trim()}
+                          fallback={<p class="el-empty-inline">（无内容）</p>}
+                        >
+                          <div class="el-prose el-md" innerHTML={md(e().abstract)} onClick={onMdClick} />
+                        </Show>
+                      </section>
+                    }
+                  >
                     <section class="el-sec">
-                      <span class="el-sec-label">详情 · Detail</span>
+                      <span class="el-sec-label">正文 · Content</span>
                       <div class="el-detail-body el-md" innerHTML={md(e().detail!)} onClick={onMdClick} />
                     </section>
                   </Show>
@@ -1266,6 +1268,12 @@ function DetailModal(props: {
                   <section class="el-sec">
                     <span class="el-sec-label">元信息 · Meta</span>
                     <dl class="el-kv">
+                      {/* with a body present, the abstract is just the one-line
+                          recall index — show it here instead of as a section */}
+                      <Show when={e().detail?.trim() && e().abstract?.trim()}>
+                        <dt>一句话索引</dt>
+                        <dd>{e().abstract}</dd>
+                      </Show>
                       <Show when={e().trigger_condition?.trim()}>
                         <dt>触发条件</dt>
                         <dd>{e().trigger_condition}</dd>
@@ -1324,20 +1332,21 @@ function DetailModal(props: {
                   </label>
                 </div>
                 <label class="el-field">
-                  <span class="el-sec-label">摘要 · Abstract</span>
+                  <span class="el-sec-label">一句话索引 · Abstract</span>
                   <textarea
                     class="el-input el-textarea"
-                    rows={3}
+                    rows={2}
+                    placeholder="做什么 + 什么时候用（用于召回候选/列表扫读）"
                     value={dAbstract()}
                     onInput={(ev) => setDAbstract(ev.currentTarget.value)}
                   />
                 </label>
                 <label class="el-field">
-                  <span class="el-sec-label">详情 · Detail（可选，Markdown，多步骤正文）</span>
+                  <span class="el-sec-label">正文 · Detail（Markdown，不限长度）</span>
                   <textarea
                     class="el-input el-textarea el-textarea-detail"
-                    rows={8}
-                    placeholder="（可选）完整步骤/长文正文，支持 Markdown"
+                    rows={10}
+                    placeholder="经验正文：规则类一两行；多步骤用有序列表分步；命令用行内代码"
                     value={dDetail()}
                     onInput={(ev) => setDDetail(ev.currentTarget.value)}
                   />

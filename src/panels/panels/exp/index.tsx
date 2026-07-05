@@ -21,6 +21,7 @@ import { RefineList } from "./refine-list"
 import { RefineLog } from "./refine-log"
 import { Retrieve } from "./retrieve"
 import { ColdStart } from "./cold-start"
+import { RefineModel } from "./refine-model"
 import "./exp.css"
 
 // "graph" (关系图谱) retired as a standalone tab — per-experience relations now
@@ -46,6 +47,10 @@ export function ExpPanel(): JSX.Element {
           <h1 class="exp-panel-title">经验库</h1>
         </div>
         <div class="exp-panel-tools">
+          {/* 整理模型 selector — also lives in 管理, surfaced here so the LLM
+              picker is discoverable where it's actually used. Lists opencode's
+              live connected models. */}
+          <RefineModel />
           <nav class="exp-tabs" aria-label="经验库视图">
             <For each={TABS}>
               {(t) => (

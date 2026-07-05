@@ -1156,6 +1156,25 @@
   padding: 0 5px;
 }
 
+/* ── Batch re-refine (按新契约重炼全部) ──────────────────────────────────── */
+.rl-reref-q {
+  font-size: var(--font-size-small);
+  color: var(--text-on-warning-base);
+  white-space: nowrap;
+}
+.rl-reref-status {
+  font-size: var(--font-size-small);
+  color: var(--text-weak);
+  font-variant-numeric: tabular-nums;
+  padding: 6px 10px;
+  border: 1px solid var(--border-weaker-base);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+}
+.rl-reref-status .rl-skipped {
+  margin-top: 4px;
+}
+
 /* ── Skill candidates ─────────────────────────────────────────────────────── */
 .sk-sec {
   margin-top: calc(var(--spacing) * 6);

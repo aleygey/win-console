@@ -879,8 +879,47 @@ function Field(props: {
 // Section 2 — Global review (LLM plan → apply)
 // -----------------------------------------------------------------------------
 
+// Batch re-refine ("按新契约重炼全部") — module-level so progress survives tab
+// switches while the sequential LLM loop runs.
+const [gRerefining, setGRerefining] = createSignal(false)
+const [gRerefProgress, setGRerefProgress] = createSignal<
+  { done: number; total: number; fails: string[] } | undefined
+>()
+
 function GlobalReview(): JSX.Element {
   const client = useExpClient()
+  const [confirmReref, setConfirmReref] = createSignal(false)
+
+  // Re-run the per-experience refine endpoint over the whole library, one at a
+  // time (server rebuilds title/abstract/detail under the current contract).
+  // Relations are deliberately NOT touched here — that's the plan's job.
+  async function reRefineAll() {
+    if (gRerefining()) return
+    setGRerefining(true)
+    setGRerefProgress({ done: 0, total: 0, fails: [] })
+    try {
+      const ov = await client.get<{
+        experiences?: Array<{ id: string; title?: string; review_status?: string }>
+      }>("/refiner/overview?limit=5000")
+      const exps = (ov.experiences ?? []).filter((e) => e.review_status !== "rejected")
+      setGRerefProgress({ done: 0, total: exps.length, fails: [] })
+      let done = 0
+      for (const e of exps) {
+        try {
+          await client.post(`/refiner/experience/${e.id}/refine`, {})
+        } catch (err) {
+          const msg = String((err as Error)?.message ?? err)
+          setGRerefProgress((p) => p && { ...p, fails: [...p.fails, `${e.title ?? e.id} — ${msg}`] })
+        }
+        done += 1
+        setGRerefProgress((p) => p && { ...p, done })
+      }
+    } catch (err) {
+      setGRerefProgress((p) => p && { ...p, fails: [...p.fails, String((err as Error)?.message ?? err)] })
+    } finally {
+      setGRerefining(false)
+    }
+  }
 
   // State is module-level so the plan survives unmount/remount (tab switches).
   const planning = gPlanning
@@ -1094,6 +1133,41 @@ function GlobalReview(): JSX.Element {
               {applying() ? "应用中…" : "全部应用"}
             </button>
           </Show>
+          {/* 按新契约重炼全部 — sequential per-exp refine; two-step confirm
+              because it fires one LLM call per experience. */}
+          <Show
+            when={!confirmReref()}
+            fallback={
+              <>
+                <span class="rl-reref-q">逐条调用 LLM 重炼全部经验？</span>
+                <button
+                  type="button"
+                  class="rl-btn rl-btn-primary"
+                  onClick={() => {
+                    setConfirmReref(false)
+                    void reRefineAll()
+                  }}
+                >
+                  确认
+                </button>
+                <button type="button" class="rl-btn" onClick={() => setConfirmReref(false)}>
+                  取消
+                </button>
+              </>
+            }
+          >
+            <button
+              type="button"
+              class="rl-btn"
+              disabled={gRerefining()}
+              onClick={() => setConfirmReref(true)}
+              title="对库里每条经验重跑一次整理 LLM，按当前内容契约重写标题/一句话索引/正文（不动关系——关系变更走上面的整理方案）"
+            >
+              {gRerefining()
+                ? `重炼中 ${gRerefProgress()?.done ?? 0}/${gRerefProgress()?.total ?? "…"}`
+                : "按新契约重炼全部"}
+            </button>
+          </Show>
         </div>
       </header>
 
@@ -1103,6 +1177,24 @@ function GlobalReview(): JSX.Element {
 
       <Show when={applyError()}>
         <div class="rl-error">应用失败：{applyError()}</div>
+      </Show>
+
+      {/* Batch re-refine progress (runs sequentially; failures listed) */}
+      <Show when={gRerefProgress()}>
+        {(p) => (
+          <div class="rl-reref-status">
+            重炼进度 {p().done}/{p().total}
+            {!gRerefining() && p().total > 0 && p().done >= p().total ? " — 已完成" : ""}
+            <Show when={p().fails.length > 0}>
+              <details class="rl-skipped">
+                <summary>失败 {p().fails.length} 条</summary>
+                <ul>
+                  <For each={p().fails}>{(f) => <li>{f}</li>}</For>
+                </ul>
+              </details>
+            </Show>
+          </div>
+        )}
       </Show>
 
       {/* Applied result banner */}

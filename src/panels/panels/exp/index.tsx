@@ -18,19 +18,19 @@
 import { createSignal, Switch, Match, For, type JSX } from "solid-js"
 import { registerPanel } from "../../registry"
 import { RefineList } from "./refine-list"
-import { RefineGraph } from "./refine-graph"
 import { RefineLog } from "./refine-log"
 import { Retrieve } from "./retrieve"
 import { ColdStart } from "./cold-start"
 import "./exp.css"
 
-type TabId = "list" | "graph" | "logs" | "retrieve" | "coldstart"
+// "graph" (关系图谱) retired as a standalone tab — per-experience relations now
+// live inside the card detail modal (RelationStar in refine-list.tsx).
+type TabId = "list" | "logs" | "retrieve" | "coldstart"
 
 type TabDef = { id: TabId; label: string }
 
 const TABS: TabDef[] = [
   { id: "list", label: "经验列表" },
-  { id: "graph", label: "关系图谱" },
   { id: "logs", label: "整理日志" },
   { id: "retrieve", label: "召回" },
   { id: "coldstart", label: "冷启动" },
@@ -67,9 +67,6 @@ export function ExpPanel(): JSX.Element {
         <Switch>
           <Match when={tab() === "list"}>
             <RefineList />
-          </Match>
-          <Match when={tab() === "graph"}>
-            <RefineGraph />
           </Match>
           <Match when={tab() === "logs"}>
             <RefineLog />

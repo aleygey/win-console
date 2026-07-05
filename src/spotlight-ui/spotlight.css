@@ -261,15 +261,11 @@ body,
   line-height: 1.4;
   color: var(--text-strong);
 }
-.qa-bubble.markdown h1 {
-  font-size: 1.2em;
-}
-.qa-bubble.markdown h2 {
-  font-size: 1.12em;
-}
-.qa-bubble.markdown h3 {
-  font-size: 1.05em;
-}
+/* TUI-style: one font size for every level (same as 会话监控) — mixed sizes
+   inside a bubble read as glitches; levels are told apart by weight only. */
+.qa-bubble.markdown h1,
+.qa-bubble.markdown h2,
+.qa-bubble.markdown h3,
 .qa-bubble.markdown h4,
 .qa-bubble.markdown h5,
 .qa-bubble.markdown h6 {
@@ -331,7 +327,9 @@ body,
   font-family: var(--font-family-mono);
   /* 0.95em: 0.88em made inline code read visibly smaller than the 14px prose */
   font-size: 0.95em;
-  background: var(--surface-inset-base);
+  /* TUI-style keyword tint (matches 会话监控): inline code in green */
+  color: var(--text-on-success-base);
+  background: color-mix(in srgb, var(--surface-success-weak) 65%, transparent);
   border-radius: var(--radius-sm);
   padding: 1px 5px;
 }
@@ -353,6 +351,8 @@ body,
   background: transparent;
   padding: 0;
   font-size: inherit;
+  /* keep code BLOCKS neutral — the green tint is for inline keywords only */
+  color: inherit;
 }
 
 /* quotes / rules / links / media */
@@ -384,7 +384,8 @@ body,
 }
 .qa-bubble.markdown strong {
   font-weight: 600;
-  color: var(--text-strong);
+  /* TUI bolds keywords in amber (matches 会话监控) */
+  color: var(--text-on-warning-base);
 }
 
 /* typing dots */

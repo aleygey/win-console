@@ -293,6 +293,7 @@ function SessionModal(props: { id: string; entry: () => ChatMonitorEntry | undef
   const [showReasoning, setShowReasoning] = createSignal(localStorage.getItem(LS_REASONING) === "1")
   let logEl: HTMLDivElement | undefined
   let fileEl: HTMLInputElement | undefined
+  let inputEl: HTMLTextAreaElement | undefined
 
   const nearBottom = () => !logEl || logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 140
   const jumpToEnd = () => requestAnimationFrame(() => requestAnimationFrame(() => { if (logEl) logEl.scrollTop = logEl.scrollHeight }))
@@ -363,6 +364,7 @@ function SessionModal(props: { id: string; entry: () => ChatMonitorEntry | undef
     const { textSuffix, files } = buildAttachmentPayload(atts)
     setMsgs((m) => [...m, { role: "user", text: text || "（附件）" }])
     setInput("")
+    if (inputEl) inputEl.style.height = "auto"
     setAttachments([])
     setBusy(true)
     scrollDown()
@@ -470,9 +472,16 @@ function SessionModal(props: { id: string; entry: () => ChatMonitorEntry | undef
               <textarea
                 class="sess-input"
                 rows={1}
+                ref={inputEl}
                 placeholder="给这个会话发消息(Enter 发送 · Shift+Enter 换行)· 可粘贴/拖拽图片、文件"
                 value={input()}
-                onInput={(e) => setInput(e.currentTarget.value)}
+                onInput={(e) => {
+                  setInput(e.currentTarget.value)
+                  // auto-grow with content up to the CSS max-height, then scroll
+                  const el = e.currentTarget
+                  el.style.height = "auto"
+                  el.style.height = `${Math.min(el.scrollHeight, 160)}px`
+                }}
                 onKeyDown={onKey}
                 onPaste={onPaste}
               />

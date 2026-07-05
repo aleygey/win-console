@@ -238,14 +238,47 @@ function shortId(id: string): string {
 // -----------------------------------------------------------------------------
 
 export function RefineLog(): JSX.Element {
+  // Curation actions (global review / skill candidates) lead; the two raw
+  // audit feeds (activity + judge) fold away at the bottom.
   return (
     <div class="rl-root">
-      <ActivityLog />
-      <JudgeLog />
       <GlobalReview />
       <SkillCandidates />
+      <FoldSection title="整理日志" hint="每次 refiner 运行的审计流水(含 noise/dropped/error 与 LLM 调用轨迹)">
+        <ActivityLog />
+      </FoldSection>
+      <FoldSection title="判定日志" hint="judge 每轮对注入经验的判定(采用/忽略/无关/问题)。只记录,不影响召回。">
+        <JudgeLog />
+      </FoldSection>
       <ExpPeek />
     </div>
+  )
+}
+
+/** Collapsible wrapper for the audit feeds — collapsed by default; the inner
+ *  section's own header is hidden via CSS so titles don't double up. */
+function FoldSection(props: {
+  title: string
+  hint?: string
+  defaultOpen?: boolean
+  children: JSX.Element
+}): JSX.Element {
+  const [open, setOpen] = createSignal(props.defaultOpen ?? false)
+  return (
+    <section class="rlog-fold" data-open={open()}>
+      <button type="button" class="rlog-fold-hd" onClick={() => setOpen((v) => !v)}>
+        <span class="rlog-fold-caret" data-open={open()} aria-hidden="true">
+          ▸
+        </span>
+        <span class="rlog-fold-title">{props.title}</span>
+        <Show when={props.hint}>
+          <span class="rlog-fold-hint">{props.hint}</span>
+        </Show>
+      </button>
+      <Show when={open()}>
+        <div class="rlog-fold-bd">{props.children}</div>
+      </Show>
+    </section>
   )
 }
 
@@ -311,6 +344,11 @@ function JudgeLog(): JSX.Element {
                   <span class="jl-caret" data-open={open().has(row.id)}>
                     ▸
                   </span>
+                  <Show when={row.session_id}>
+                    <span class="jl-sess" title={`会话 ${row.session_id}`}>
+                      …{row.session_id.slice(-6)}
+                    </span>
+                  </Show>
                   <Show when={row.workflow}>
                     <span class="jl-wf">{row.workflow}</span>
                   </Show>
@@ -330,14 +368,24 @@ function JudgeLog(): JSX.Element {
                     <For each={row.verdicts}>
                       {(v) => (
                         <div class="jl-verdict">
-                          <span class={`jl-badge jl-${v.state}`}>{JSTATE_LABEL[v.state] ?? v.state}</span>
-                          <IdChip id={v.id} />
-                          <span class="jl-vtitle">{v.title ?? ""}</span>
-                          <Show when={v.bad_subtype}>
-                            <span class="jl-subtype">{v.bad_subtype}</span>
-                          </Show>
+                          {/* line 1: verdict chip + which experience */}
+                          <div class="jl-verdict-hd">
+                            <span class={`jl-badge jl-${v.state}`}>{JSTATE_LABEL[v.state] ?? v.state}</span>
+                            <button
+                              type="button"
+                              class="jl-vtitle"
+                              title={`查看经验 ${v.id}`}
+                              onClick={() => setGPeekId(v.id)}
+                            >
+                              {v.title || v.id}
+                            </button>
+                            <Show when={v.bad_subtype}>
+                              <span class="jl-subtype">{v.bad_subtype}</span>
+                            </Show>
+                          </div>
+                          {/* line 2: the judge's full reasoning, wrapped */}
                           <Show when={v.rationale}>
-                            <span class="jl-rationale">{v.rationale}</span>
+                            <p class="jl-rationale">{v.rationale}</p>
                           </Show>
                         </div>
                       )}

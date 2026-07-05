@@ -591,6 +591,9 @@
 .sess-modal .markdown p {
   margin: 0 0 10px;
 }
+/* TUI-style headings: terminal output has ONE font size — levels are told
+   apart by weight/color, not size. Mixed sizes inside a bubble read as
+   glitches ("不同大小格式的字体"), so every level renders at 1em. */
 .sess-modal .markdown h1,
 .sess-modal .markdown h2,
 .sess-modal .markdown h3,
@@ -601,19 +604,6 @@
   color: var(--text-strong);
   font-weight: var(--font-weight-semibold);
   line-height: 1.4;
-}
-.sess-modal .markdown h1 {
-  font-size: 1.2em;
-}
-.sess-modal .markdown h2 {
-  font-size: 1.12em;
-}
-.sess-modal .markdown h3 {
-  font-size: 1.05em;
-}
-.sess-modal .markdown h4,
-.sess-modal .markdown h5,
-.sess-modal .markdown h6 {
   font-size: 1em;
 }
 .sess-modal .markdown ul,
@@ -642,7 +632,10 @@
   /* 0.95em (≈13.3px): the earlier 0.88em made `.hex`/`.srec`-style inline code
      read visibly smaller than the surrounding 14px prose */
   font-size: 0.95em;
-  background: var(--surface-inset-base);
+  /* TUI-style keyword tint: opencode's terminal renderer colors inline code
+     green — mirror that (theme-aware) instead of a gray chip. */
+  color: var(--text-on-success-base);
+  background: color-mix(in srgb, var(--surface-success-weak) 65%, transparent);
   padding: 1px 5px;
   border-radius: var(--radius-sm);
 }
@@ -699,7 +692,12 @@
 }
 .sess-modal .markdown strong {
   font-weight: var(--font-weight-semibold);
-  color: var(--text-strong);
+  /* TUI bolds keywords in amber — same accent here, theme-aware. */
+  color: var(--text-on-warning-base);
+}
+.sess-modal .markdown pre code {
+  /* keep code blocks neutral — the green tint is for inline keywords only */
+  color: inherit;
 }
 
 /* ── tool / reasoning / error / file parts (ported) ─────────────────────── */

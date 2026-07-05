@@ -312,6 +312,15 @@ function ManagePanel() {
                       </div>
                     </Show>
 
+                    {/* 经验库整理模型 — lists opencode's live connected models,
+                        writes the playbook override (got dropped from this card
+                        in an earlier refactor; the import sat unused). */}
+                    <Show when={cap.id === "exp"}>
+                      <div class="mg-cap-config">
+                        <RefineModel />
+                      </div>
+                    </Show>
+
                     {/* configSchema → form, zero per-capability code */}
                     <Show when={cap.configSchema && cap.configSchema.fields.length > 0}>
                       <div class="mg-cap-config">

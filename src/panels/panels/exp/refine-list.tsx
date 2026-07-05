@@ -1049,6 +1049,7 @@ function DetailModal(props: {
 
   // Collapsible secondary folds — caret rotates via data-open.
   const [relOpen, setRelOpen] = createSignal(true)
+  const [metaOpen, setMetaOpen] = createSignal(false)
   const [usageOpen, setUsageOpen] = createSignal(false)
   const [obsOpen, setObsOpen] = createSignal(false)
   const [histOpen, setHistOpen] = createSignal(false)
@@ -1229,18 +1230,6 @@ function DetailModal(props: {
               when={editing()}
               fallback={
                 <>
-                  {/* Statement — the focal block: actionable rule, emphasized,
-                      with a left border in the kind hue. */}
-                  <Show when={e().statement?.trim()}>
-                    <div
-                      class="el-statement"
-                      style={{ "--el-kind-color": kindColor(e().kind) }}
-                    >
-                      <span class="el-statement-label">规则 · Statement</span>
-                      <p class="el-statement-text">{e().statement}</p>
-                    </div>
-                  </Show>
-
                   {/* Body — detail is the content under the new contract;
                       legacy items without one show their abstract instead. */}
                   <Show
@@ -1263,43 +1252,6 @@ function DetailModal(props: {
                     </section>
                   </Show>
 
-                  {/* Meta — slim: only descriptive fields; stats live in the
-                      usage fold below. */}
-                  <section class="el-sec">
-                    <span class="el-sec-label">元信息 · Meta</span>
-                    <dl class="el-kv">
-                      {/* with a body present, the abstract is just the one-line
-                          recall index — show it here instead of as a section */}
-                      <Show when={e().detail?.trim() && e().abstract?.trim()}>
-                        <dt>一句话索引</dt>
-                        <dd>{e().abstract}</dd>
-                      </Show>
-                      <Show when={e().trigger_condition?.trim()}>
-                        <dt>触发条件</dt>
-                        <dd>{e().trigger_condition}</dd>
-                      </Show>
-                      <Show when={e().task_type?.trim()}>
-                        <dt>任务类型</dt>
-                        <dd>{e().task_type}</dd>
-                      </Show>
-                      <Show when={e().categories && e().categories!.length > 0}>
-                        <dt>分类</dt>
-                        <dd>{e().categories!.join(" · ")}</dd>
-                      </Show>
-                      <dt>创建于</dt>
-                      <dd>{fmtDateTime(e().created_at)}</dd>
-                      <dt>最近整理</dt>
-                      <dd>{fmtDateTime(e().last_refined_at)}</dd>
-                      <Show
-                        when={
-                          e().related_experience_ids && e().related_experience_ids.length > 0
-                        }
-                      >
-                        <dt>关联经验</dt>
-                        <dd>{e().related_experience_ids.length} 条</dd>
-                      </Show>
-                    </dl>
-                  </section>
                 </>
               }
             >
@@ -1424,6 +1376,73 @@ function DetailModal(props: {
                   <Show when={relOpen()}>
                     <RelationStar exp={e()} onNavigate={props.onNavigate} />
                   </Show>
+                </div>
+              </div>
+
+              {/* Meta + statement — reference info, folded away by default so
+                  the body and relations stay the focus. */}
+              <div class="el-fold" data-open={metaOpen()}>
+                <button
+                  type="button"
+                  class="el-fold-hd"
+                  onClick={() => setMetaOpen((v) => !v)}
+                >
+                  <span class="el-fold-caret" aria-hidden="true">
+                    <CaretIcon />
+                  </span>
+                  <span class="el-fold-title">元信息 · Meta</span>
+                  <span class="el-fold-summary">
+                    {kindLabel(e().kind)}
+                    <Show when={e().categories && e().categories!.length > 0}>
+                      {" · "}
+                      {e().categories!.join(" · ")}
+                    </Show>
+                  </span>
+                </button>
+                <div class="el-fold-bd">
+                  {/* Statement — machine-readable one-line rule; injected to the
+                      agent as `rule:`, secondary for human reading. */}
+                  <Show when={e().statement?.trim()}>
+                    <div
+                      class="el-statement"
+                      style={{ "--el-kind-color": kindColor(e().kind) }}
+                    >
+                      <span class="el-statement-label">规则 · Statement（注入给 agent 的机器可读一行规则）</span>
+                      <p class="el-statement-text">{e().statement}</p>
+                    </div>
+                  </Show>
+                  <dl class="el-kv">
+                    {/* with a body present, the abstract is just the one-line
+                        recall index — show it here instead of as a section */}
+                    <Show when={e().detail?.trim() && e().abstract?.trim()}>
+                      <dt>一句话索引</dt>
+                      <dd>{e().abstract}</dd>
+                    </Show>
+                    <Show when={e().trigger_condition?.trim()}>
+                      <dt>触发条件</dt>
+                      <dd>{e().trigger_condition}</dd>
+                    </Show>
+                    <Show when={e().task_type?.trim()}>
+                      <dt>任务类型</dt>
+                      <dd>{e().task_type}</dd>
+                    </Show>
+                    <Show when={e().categories && e().categories!.length > 0}>
+                      <dt>分类</dt>
+                      <dd>{e().categories!.join(" · ")}</dd>
+                    </Show>
+                    <dt>创建于</dt>
+                    <dd>{fmtDateTime(e().created_at)}</dd>
+                    <dt>最近整理</dt>
+                    <dd>{fmtDateTime(e().last_refined_at)}</dd>
+                    <Show
+                      when={
+                        e().related_experience_ids && e().related_experience_ids.length > 0
+                      }
+                    >
+                      <dt>关联经验</dt>
+                      <dd>{e().related_experience_ids.length} 条</dd>
+                    </Show>
+                  </dl>
                 </div>
               </div>
 

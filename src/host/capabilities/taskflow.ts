@@ -285,7 +285,10 @@ const TOOL_CONTRACT = [
   "- task_update_status(id, status, note?) — 更新状态（可用: clarifying/ready/doing/review/blocked/synced；done 只能人工设置）",
   "- task_append_log(id, content) — 向「执行日志」区追加一条记录（带时间戳）",
   "- task_set_field(id, key, value) — 更新 priority/type/pha_issue 字段",
-  "文档分区规则：frontmatter 和「执行日志」由你（经工具）维护；「目标/验收标准/人工备注」属于用户，禁止改写；「待澄清」区你写问题（Q:），用户写答案（A:）。",
+  "若以上 task_* 工具在你的工具列表里不存在（win-host MCP 未接通），改用文件编辑达成同样效果：",
+  "直接修改任务文档——改 frontmatter 的 status/priority/type/pha_issue 字段、向「## 执行日志」小节追加条目。",
+  "文件本身就是接口，taskflow 会通过扫描感知你的修改；status 取值与上述白名单一致，同样不得设为 done。",
+  "文档分区规则：frontmatter 和「执行日志」由你维护；「目标/验收标准/人工备注」属于用户，禁止改写；「待澄清」区你写问题（Q:），用户写答案（A:）。",
 ].join("\n")
 
 function clarifyPrompt(t: TaskMeta, doc: string, kanbanHuman: string): string {

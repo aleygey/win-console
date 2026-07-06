@@ -218,7 +218,12 @@ function AskCard(props: { ask: ChatPendingAsk; onDone: () => void | Promise<void
 }
 
 /** One session card in the wall. */
-function SessionCard(props: { e: ChatMonitorEntry; onOpen: () => void }): JSX.Element {
+function SessionCard(props: {
+  e: ChatMonitorEntry
+  /** taskflow 任务归属（会话由任务看板发起时显示角标，点击跳任务看板） */
+  task?: { id: string; title: string }
+  onOpen: () => void
+}): JSX.Element {
   const st = () => statusOf(props.e)
   return (
     <button type="button" class="sess-card" data-status={st().key} onClick={props.onOpen}>
@@ -227,6 +232,22 @@ function SessionCard(props: { e: ChatMonitorEntry; onOpen: () => void }): JSX.El
           <Icon name={st().icon} size={12} />
           {st().label}
         </span>
+        <Show when={props.task}>
+          {(t) => (
+            <span
+              role="button"
+              tabIndex={0}
+              class="sess-task-chip"
+              title={`任务 ${t().id} · ${t().title}（点击打开任务看板）`}
+              onClick={(ev) => {
+                ev.stopPropagation()
+                location.hash = "#panel=taskflow"
+              }}
+            >
+              {t().id}
+            </span>
+          )}
+        </Show>
         <span class="sess-spacer" />
         <span class="sess-card-time">{timeAgo(props.e.updatedAt)}</span>
       </div>
@@ -510,6 +531,34 @@ function SessionsPanel(): JSX.Element {
   const openEntry = () => entries().find((e) => e.id === openId())
   const busyCount = () => entries().filter((e) => e.busy).length
 
+  // taskflow 归属：sessionId → 任务。daemon 无 taskflow（旧版）时静默为空。
+  const [taskBySession, setTaskBySession] = createSignal<Record<string, { id: string; title: string }>>({})
+  async function loadTaskMap(): Promise<void> {
+    try {
+      const r = await api.read<{ ok: boolean; tasks?: Array<{ id: string; title: string; sessions?: string[] }> }>(
+        "taskflow",
+        "/tasks",
+      )
+      const map: Record<string, { id: string; title: string }> = {}
+      for (const t of r.tasks ?? []) for (const sid of t.sessions ?? []) map[sid] = { id: t.id, title: t.title }
+      setTaskBySession(map)
+    } catch {
+      /* capability 不存在 — 不显示角标 */
+    }
+  }
+
+  // 深链：#panel=sessions&session=<id> 直接弹出对应会话（任务看板跳转用）。
+  const sessionFromHash = () => /[#&]session=([\w-]+)/.exec(location.hash)?.[1]
+  const [wantSession, setWantSession] = createSignal<string | undefined>(sessionFromHash())
+  createEffect(() => {
+    const want = wantSession()
+    if (!want) return
+    if (entries().some((e) => e.id === want)) {
+      setOpenId(want)
+      setWantSession(undefined)
+    }
+  })
+
   let stopped = false
   let monitorTimer: ReturnType<typeof setTimeout> | undefined
   async function monitorTick(): Promise<void> {
@@ -529,16 +578,22 @@ function SessionsPanel(): JSX.Element {
 
   onMount(() => {
     void monitorTick()
+    void loadTaskMap()
+    const taskTimer = setInterval(() => void loadTaskMap(), 60_000)
     const onVis = () => {
       if (!document.hidden) {
         clearTimeout(monitorTimer)
         void monitorTick()
       }
     }
+    const onHash = () => setWantSession(sessionFromHash())
+    window.addEventListener("hashchange", onHash)
     document.addEventListener("visibilitychange", onVis)
     onCleanup(() => {
       stopped = true
       clearTimeout(monitorTimer)
+      clearInterval(taskTimer)
+      window.removeEventListener("hashchange", onHash)
       document.removeEventListener("visibilitychange", onVis)
     })
   })
@@ -577,7 +632,9 @@ function SessionsPanel(): JSX.Element {
                     <span class="sess-group-rule" aria-hidden="true" />
                   </div>
                   <div class="sess-grid">
-                    <For each={g.items}>{(e) => <SessionCard e={e} onOpen={() => setOpenId(e.id)} />}</For>
+                    <For each={g.items}>
+                      {(e) => <SessionCard e={e} task={taskBySession()[e.id]} onOpen={() => setOpenId(e.id)} />}
+                    </For>
                   </div>
                 </section>
               )}

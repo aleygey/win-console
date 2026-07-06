@@ -1,0 +1,310 @@
+/**
+ * taskflow panel — 任务看板。状态列布局（横向滚动），卡片紧凑；全部使用
+ * styles/tokens.css 语义 token，明暗主题自适应。tf- 命名空间。
+ */
+
+.tf-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--background-base);
+}
+
+.tf-header {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 4) calc(var(--spacing) * 5) calc(var(--spacing) * 3);
+  border-bottom: 1px solid var(--border-weak-base);
+  background: var(--background-strong);
+}
+
+.tf-title {
+  margin: 0;
+  font-size: var(--font-size-x-large);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-strong);
+}
+
+.tf-project {
+  font-size: var(--font-size-small);
+  padding: 4px 8px;
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  background: var(--surface-base);
+  color: var(--text-base);
+}
+
+.tf-spacer {
+  flex: 1 1 auto;
+}
+
+.tf-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: calc(var(--spacing) * 1.25) calc(var(--spacing) * 2.5);
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  background: var(--button-secondary-base);
+  color: var(--text-base);
+  font: inherit;
+  font-size: var(--font-size-small);
+  cursor: pointer;
+}
+
+.tf-btn:hover:not(:disabled) {
+  background: var(--button-secondary-hover);
+  border-color: var(--border-hover);
+  color: var(--text-strong);
+}
+
+.tf-btn:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.tf-btn-primary {
+  border-color: transparent;
+  background: var(--cobalt-9);
+  color: #fff;
+}
+
+.tf-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+  border-color: transparent;
+  background: var(--cobalt-9);
+  color: #fff;
+}
+
+.tf-err {
+  margin: calc(var(--spacing) * 3) calc(var(--spacing) * 5) 0;
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+  border: 1px solid color-mix(in srgb, var(--text-on-critical-base) 40%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--surface-critical-weak);
+  color: var(--text-on-critical-base);
+  font-size: var(--font-size-small);
+  line-height: 1.6;
+}
+
+.tf-err-hint {
+  color: var(--text-weak);
+}
+
+.tf-empty {
+  margin: calc(var(--spacing) * 6) auto;
+  max-width: 560px;
+  font-size: var(--font-size-small);
+  color: var(--text-weak);
+  line-height: 1.7;
+}
+
+.tf-empty pre {
+  padding: 12px 14px;
+  border: 1px solid var(--border-weaker-base);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  overflow-x: auto;
+  color: var(--text-base);
+}
+
+.tf-empty code {
+  font-family: var(--font-family-mono);
+  color: var(--text-strong);
+}
+
+/* ── Board ─────────────────────────────────────────────────────────────── */
+
+.tf-board {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: calc(var(--spacing) * 3);
+  padding: calc(var(--spacing) * 4) calc(var(--spacing) * 5);
+  overflow-x: auto;
+  align-items: stretch;
+}
+
+.tf-col {
+  flex: 0 0 250px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-weaker-base);
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+  max-height: 100%;
+}
+
+.tf-col-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border-weaker-base);
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-strong);
+}
+
+.tf-col-hd[data-tone="warn"] {
+  color: var(--text-on-warning-base);
+}
+
+.tf-col-hd[data-tone="good"] {
+  color: var(--text-on-success-base);
+}
+
+.tf-col-hd[data-tone="info"] {
+  color: var(--cobalt-11);
+}
+
+.tf-col-n {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--font-weight-regular);
+  color: var(--text-weak);
+}
+
+.tf-col-bd {
+  flex: 1 1 auto;
+  min-height: 60px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+
+/* ── Card ──────────────────────────────────────────────────────────────── */
+
+.tf-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  background: var(--background-strong);
+  box-shadow: var(--shadow-xs);
+}
+
+.tf-card-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  color: var(--text-weak);
+}
+
+.tf-id {
+  color: var(--text-base);
+  font-weight: var(--font-weight-medium);
+}
+
+.tf-pri {
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border-weak-base);
+  background: var(--surface-base);
+  font-size: 10px;
+}
+
+.tf-pri[data-p="P0"],
+.tf-pri[data-p="P1"] {
+  color: var(--text-on-critical-base);
+  border-color: color-mix(in srgb, var(--text-on-critical-base) 40%, transparent);
+}
+
+.tf-time {
+  color: var(--text-weaker);
+}
+
+.tf-card-title {
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-strong);
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.tf-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.tf-tag {
+  padding: 0 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-weaker-base);
+  background: var(--surface-weak);
+  color: var(--text-weak);
+  font-size: 10.5px;
+  line-height: 1.7;
+}
+
+.tf-card-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.tf-sess {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border: 1px solid var(--cobalt-6);
+  border-radius: 999px;
+  background: var(--cobalt-3);
+  color: var(--cobalt-11);
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.tf-sess:hover {
+  filter: brightness(1.05);
+}
+
+.tf-pha {
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--text-on-success-base) 40%, transparent);
+  border-radius: 999px;
+  color: var(--text-on-success-base);
+  font-size: 10.5px;
+  text-decoration: none;
+}
+
+.tf-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-weaker-base);
+}
+
+.tf-card-actions .tf-btn {
+  padding: 2px 10px;
+  font-size: 12px;
+}
+
+.tf-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-weak);
+  font-size: 11.5px;
+  text-decoration: none;
+}
+
+.tf-open:hover {
+  color: var(--text-strong);
+}

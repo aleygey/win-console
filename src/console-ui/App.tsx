@@ -21,6 +21,7 @@ import type { CapabilityInfo, GlobalConfig, HostEvent } from "../panels/global"
 /** Map panel id → Lucide icon name (replaces the emoji each panel registered). */
 const RAIL_ICON: Record<string, string> = {
   sessions: "activity",
+  taskflow: "list-checks",
   mailflow: "mail",
   exp: "share-2",
   manage: "settings",

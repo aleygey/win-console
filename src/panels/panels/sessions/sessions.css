@@ -183,6 +183,25 @@
   background: var(--surface-warning-weak);
   color: var(--text-on-warning-base);
 }
+/* taskflow 任务角标 — 会话由任务看板发起时显示 */
+.sess-task-chip {
+  margin-left: 6px;
+  padding: 0 7px;
+  border: 1px solid var(--cobalt-6);
+  border-radius: 999px;
+  background: var(--cobalt-3);
+  color: var(--cobalt-11);
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+  line-height: 1.7;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sess-task-chip:hover {
+  filter: brightness(1.05);
+}
+
 .sess-card-time {
   flex: none;
   font-size: 11px;

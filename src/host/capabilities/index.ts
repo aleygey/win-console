@@ -13,6 +13,7 @@ import { mailflowCapability } from "./mailflow"
 import { notifyCapability } from "./notify"
 import { clipboardCapability } from "./clipboard"
 import { expCapability } from "./exp"
+import { taskflowCapability } from "./taskflow"
 
 // Note: the old standalone `outlook` capability was folded into `mailflow`
 // (its outlook_search tool moved there), so the management page shows a single
@@ -20,6 +21,7 @@ import { expCapability } from "./exp"
 export const builtinCapabilities: Capability[] = [
   chatCapability,
   mailflowCapability,
+  taskflowCapability,
   notifyCapability,
   clipboardCapability,
   expCapability,

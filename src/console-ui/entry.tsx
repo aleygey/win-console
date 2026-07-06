@@ -13,6 +13,7 @@ import "./console.css"
 // 对话面板已下线 — Ctrl+Space 快速对话框是唯一输入面;控制台里换成只读的会话监控。
 // 通知测试面板已下线 — notify 能力本身保留(mailflow/桌面通知插件/MCP 工具在用)。
 import "../panels/panels/sessions"
+import "../panels/panels/taskflow"
 import "../panels/panels/mailflow"
 import "../panels/panels/exp"
 import "./panels/manage"

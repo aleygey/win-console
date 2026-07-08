@@ -1,33 +1,27 @@
 /**
- * taskflow capability — 文档驱动的项目/任务 agent 编排（Obsidian vault 上）。
+ * taskflow capability v4 — 看板中心 · 人驱动 · 系统只做记录/连接/标准化。
  *
- * 唯一驱动信号是任务文档 frontmatter 的 `status` 字段（受限平铺 YAML，本文件
- * 自带 60 行解析器，零新依赖）。轮询扫描 <vaultDir>/<项目>/tasks/*.md，检测
- * status 迁移并派发：
+ * 定位（与 v1「自动状态机」相反）：**你驱动一切**，taskflow 负责三件事——
+ *   1) 记录：用固定模板 + 格式化工具，让 agent 结构化地写文档（不再随意发挥）；
+ *   2) 连接：任务 ⇄ session ⇄ PHA 的关联（存在任务 frontmatter.sessions[]）；
+ *   3) 省事：从任务文档一键启动/继续 session；Obsidian 切文档→会话面板联动。
  *
- *   inbox      → 起澄清 session（autoClarify 时）：agent 补全目标/验收或把问题
- *                写进「待澄清」区（经 task_* 工具）。
- *   ready      → 面板/路由「启动」（或 autoStart）：createSession(项目目录) +
- *                执行指令模板，sessionId 写回 frontmatter.sessions。
- *   doing(人改) → 同上（人直接在 Obsidian 把 status 改成 doing 也能启动）。
- *   done       → 向任务 session 发 PHA 同步指令，agent 推送后置 synced。
+ * 状态的唯一来源 = Obsidian 官方 Kanban 看板文件里卡片所在的「列」。taskflow
+ * 读写同一个 md（拖卡=改状态），绝不把 status 存进任务 frontmatter（消灭双源）。
  *
- * 人机分界（硬约束）：`done` 只能人置（task_update_status 白名单不含 done）；
- * frontmatter + 「执行日志」区 = 机器写，目标/验收/人工备注 = 人写。taskflow
- * 每次写盘后把新 mtime 记入 lastSeen，自己的写入不会再次触发状态机。
+ * 「什么是任务」= 它的 `[[链接]]` 出现在某个看板上。任务文档放哪都行、目录不限。
+ * 没有自动派发、没有轮询状态机——poll 仅用于刷新注册表缓存（供焦点联动/面板）。
  *
- * 参照 mailflow 的成熟模式：self-rescheduling setTimeout 轮询（读 live 配置）、
- * 状态持久化到 ctx.dataDir/taskflow-state.json、routes 服务面板、tools 暴露给
- * agent（win-host MCP）。
+ * 与 opencode 的接口：MCP 工具（task_*）。若工具不可用，agent 直接编辑同名区域，
+ * 文件本身就是接口。
  */
 import type { Capability, HostContext, McpToolDef, ModelRef, RouteDef } from "../../contracts"
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } from "node:fs"
 import { join, dirname, basename } from "node:path"
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Frontmatter — restricted flat YAML (scalars + string lists), round-trip safe
-// for the keys we own. Unknown keys are preserved verbatim as strings/lists.
-// ─────────────────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+// Frontmatter — restricted flat YAML (scalars + string lists), round-trip safe.
+// ═════════════════════════════════════════════════════════════════════════════
 
 export type Frontmatter = Record<string, string | string[]>
 
@@ -35,7 +29,6 @@ function unquote(s: string): string {
   const m = /^(['"])(.*)\1$/.exec(s)
   return m ? m[2] : s
 }
-
 function quoteIfNeeded(s: string): string {
   if (s === "") return '""'
   return /[:#\[\]{}'"|>&*!%@`]|^\s|\s$/.test(s) ? JSON.stringify(s) : s
@@ -50,9 +43,8 @@ export function parseFrontmatter(raw: string): { fm: Frontmatter; body: string }
     fmLines.push(lines[i])
     i++
   }
-  if (i >= lines.length) return null // unterminated header (mid-save) — caller skips
+  if (i >= lines.length) return null // unterminated (mid-save) — caller skips
   const body = lines.slice(i + 1).join("\n")
-
   const fm: Frontmatter = {}
   let listKey: string | null = null
   for (const ln of fmLines) {
@@ -73,8 +65,6 @@ export function parseFrontmatter(raw: string): { fm: Frontmatter; body: string }
     const key = kv[1]
     const val = kv[2].trim()
     if (val === "") {
-      // either an empty scalar or the head of a block list — resolved by the
-      // following "- item" lines (if none arrive it stays "")
       fm[key] = ""
       listKey = key
       continue
@@ -91,8 +81,6 @@ export function parseFrontmatter(raw: string): { fm: Frontmatter; body: string }
     fm[key] = unquote(val)
     listKey = null
   }
-  // "" placeholders that accumulated list items were converted in the li branch;
-  // ones that didn't stay as empty strings, which is what Obsidian means by them.
   return { fm, body }
 }
 
@@ -105,657 +93,689 @@ export function serializeFrontmatter(fm: Frontmatter, body: string): string {
         lines.push(`${k}:`)
         for (const it of v) lines.push(`  - ${quoteIfNeeded(it)}`)
       }
-    } else {
-      lines.push(`${k}: ${quoteIfNeeded(String(v))}`)
-    }
+    } else lines.push(`${k}: ${quoteIfNeeded(String(v))}`)
   }
   lines.push("---")
   return lines.join("\n") + "\n" + body
 }
 
-/** Append one entry under the「## 执行日志」section (created at EOF if absent). */
-export function appendLogSection(body: string, entry: string): string {
-  const marker = "## 执行日志"
-  const idx = body.indexOf(marker)
-  if (idx < 0) {
-    return body.replace(/\s*$/, "") + `\n\n${marker}\n\n${entry}\n`
+// ═════════════════════════════════════════════════════════════════════════════
+// Body sections — the fixed template's regions. Agents only touch these via
+// the format-enforcing tools below; humans own 备注.
+// ═════════════════════════════════════════════════════════════════════════════
+
+const SECTIONS = ["待办", "进展", "问题与解决", "备注"] as const
+
+/** Return [start,end) line indices of the `## <heading>` block body (exclusive
+ *  of the heading line), or null if the heading is absent. */
+function sectionRange(lines: string[], heading: string): { headIdx: number; start: number; end: number } | null {
+  const headIdx = lines.findIndex((l) => l.trim() === `## ${heading}`)
+  if (headIdx < 0) return null
+  let end = lines.length
+  for (let i = headIdx + 1; i < lines.length; i++) {
+    if (/^#{1,2} /.test(lines[i])) {
+      end = i
+      break
+    }
   }
-  // insert before the next same-level heading after the section, else at EOF
-  const after = body.slice(idx + marker.length)
-  const next = after.search(/^## /m)
-  if (next < 0) return body.replace(/\s*$/, "") + `\n\n${entry}\n`
-  const cut = idx + marker.length + next
-  const head = body.slice(0, cut).replace(/\s*$/, "")
-  return `${head}\n\n${entry}\n\n${body.slice(cut)}`
+  return { headIdx, start: headIdx + 1, end }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Task model
-// ─────────────────────────────────────────────────────────────────────────────
-
-export type TaskStatus =
-  | "inbox"
-  | "clarifying"
-  | "ready"
-  | "doing"
-  | "review"
-  | "done"
-  | "synced"
-  | "blocked"
-
-const ALL_STATUS: TaskStatus[] = ["inbox", "clarifying", "ready", "doing", "review", "done", "synced", "blocked"]
-/** Statuses the AGENT may set. `done` is the human-only gate; `inbox` is birth-only. */
-const AGENT_STATUS: TaskStatus[] = ["clarifying", "ready", "doing", "review", "blocked", "synced"]
-
-export const STATUS_LABEL: Record<TaskStatus, string> = {
-  inbox: "新建",
-  clarifying: "澄清中",
-  ready: "就绪",
-  doing: "进行中",
-  review: "待验收",
-  done: "已完成",
-  synced: "已同步",
-  blocked: "阻塞",
+/** Ensure the template sections exist (non-destructive); returns possibly-grown body. */
+function ensureSections(body: string): string {
+  let out = body
+  for (const s of SECTIONS) {
+    if (!sectionRange(out.split(/\r?\n/), s)) {
+      out = out.replace(/\s*$/, "") + `\n\n## ${s}\n`
+    }
+  }
+  return out
 }
-const STATUS_EMOJI: Record<TaskStatus, string> = {
-  inbox: "📥",
-  clarifying: "❓",
-  ready: "🟡",
-  doing: "🔵",
-  review: "🟣",
-  done: "✅",
-  synced: "📤",
-  blocked: "⛔",
+
+/** Append a line at the end of a section's block (creating the section if needed). */
+function appendToSection(body: string, heading: string, line: string): string {
+  let lines = ensureSections(body).split(/\r?\n/)
+  const r = sectionRange(lines, heading)!
+  // trim trailing blank lines inside the section, then insert
+  let end = r.end
+  while (end > r.start && lines[end - 1].trim() === "") end--
+  lines = [...lines.slice(0, end), line, ...lines.slice(end)]
+  return lines.join("\n")
 }
-/** Kanban row order — actionable first. */
-const STATUS_ORDER: TaskStatus[] = ["doing", "review", "ready", "clarifying", "inbox", "blocked", "done", "synced"]
+
+/** Parse the 待办 checkbox list → {done,total,items}. */
+export function parseTodos(body: string): { done: number; total: number; items: Array<{ checked: boolean; text: string }> } {
+  const lines = body.split(/\r?\n/)
+  const r = sectionRange(lines, "待办")
+  const items: Array<{ checked: boolean; text: string }> = []
+  if (r) {
+    for (let i = r.start; i < r.end; i++) {
+      const m = /^\s*[-*]\s*\[([ xX])\]\s*(.*)$/.exec(lines[i])
+      if (m) items.push({ checked: m[1].toLowerCase() === "x", text: m[2].trim() })
+    }
+  }
+  return { done: items.filter((t) => t.checked).length, total: items.length, items }
+}
+
+/** Toggle / add a todo. Returns new body (unchanged if action can't apply). */
+function editTodo(body: string, action: "check" | "uncheck" | "add", text: string): string {
+  const withSecs = ensureSections(body)
+  const lines = withSecs.split(/\r?\n/)
+  const r = sectionRange(lines, "待办")!
+  const norm = (s: string) => s.replace(/\s+/g, "").toLowerCase()
+  if (action === "add") {
+    let end = r.end
+    while (end > r.start && lines[end - 1].trim() === "") end--
+    return [...lines.slice(0, end), `- [ ] ${text.trim()}`, ...lines.slice(end)].join("\n")
+  }
+  const want = action === "check"
+  for (let i = r.start; i < r.end; i++) {
+    const m = /^(\s*[-*]\s*)\[([ xX])\](\s*)(.*)$/.exec(lines[i])
+    if (m && norm(m[4]).includes(norm(text)) && norm(text).length > 0) {
+      lines[i] = `${m[1]}[${want ? "x" : " "}]${m[3]}${m[4]}`
+      return lines.join("\n")
+    }
+  }
+  return withSecs // no match — leave as-is (caller reports)
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Kanban board — read columns/cards; move a card between columns via line edits
+// (NEVER reserialize a board's YAML — it holds the plugin's settings block).
+// ═════════════════════════════════════════════════════════════════════════════
+
+const BOARD_MARK = "kanban-plugin: board"
+
+function isBoardFile(raw: string): boolean {
+  const p = parseFrontmatter(raw)
+  return !!p && String(p.fm["kanban-plugin"] ?? "").trim() === "board"
+}
+
+/** Extract the [[target]] (basename, drops alias/heading/#tags) from a card line. */
+function cardLink(line: string): string | null {
+  const m = /\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]/.exec(line)
+  return m ? m[1].trim().replace(/\.md$/i, "").split("/").pop()! : null
+}
+
+type BoardColumn = { name: string; cards: Array<{ link: string; checked: boolean; line: number }> }
+
+/** Parse a board's columns and their card links. Ignores the settings block. */
+export function parseBoard(raw: string): BoardColumn[] {
+  const lines = raw.split(/\r?\n/)
+  const cols: BoardColumn[] = []
+  let cur: BoardColumn | null = null
+  for (let i = 0; i < lines.length; i++) {
+    const ln = lines[i]
+    if (/^%%/.test(ln)) break // settings block — stop
+    const h = /^##\s+(.*)$/.exec(ln)
+    if (h) {
+      cur = { name: h[1].trim(), cards: [] }
+      cols.push(cur)
+      continue
+    }
+    const c = /^\s*[-*]\s*\[([ xX])\]\s*(.*)$/.exec(ln)
+    if (c && cur) {
+      const link = cardLink(c[2])
+      if (link) cur.cards.push({ link, checked: c[1].toLowerCase() === "x", line: i })
+    }
+  }
+  return cols
+}
+
+/** Move a card (matched by task basename) to `toColumn`, setting checkbox. */
+export function moveCard(raw: string, taskBase: string, toColumn: string, checked: boolean): string | null {
+  const lines = raw.split(/\r?\n/)
+  const norm = (s: string) => s.toLowerCase()
+  // find the card line
+  let cardIdx = -1
+  for (let i = 0; i < lines.length; i++) {
+    if (/^%%/.test(lines[i])) break
+    const link = /^\s*[-*]\s*\[[ xX]\]/.test(lines[i]) ? cardLink(lines[i]) : null
+    if (link && norm(link) === norm(taskBase)) {
+      cardIdx = i
+      break
+    }
+  }
+  if (cardIdx < 0) return null
+  // find the target column heading
+  let headIdx = -1
+  for (let i = 0; i < lines.length; i++) {
+    if (/^%%/.test(lines[i])) break
+    const h = /^##\s+(.*)$/.exec(lines[i])
+    if (h && norm(h[1].trim()) === norm(toColumn)) {
+      headIdx = i
+      break
+    }
+  }
+  if (headIdx < 0) return null
+  // rewrite the card line's checkbox
+  let card = lines[cardIdx].replace(/(\[)[ xX](\])/, `$1${checked ? "x" : " "}$2`)
+  // remove from old position
+  const without = [...lines.slice(0, cardIdx), ...lines.slice(cardIdx + 1)]
+  // recompute target column end (heading may have shifted if card was above it)
+  const newHead = cardIdx < headIdx ? headIdx - 1 : headIdx
+  let end = without.length
+  for (let i = newHead + 1; i < without.length; i++) {
+    if (/^##\s+/.test(without[i]) || /^%%/.test(without[i])) {
+      end = i
+      break
+    }
+  }
+  while (end > newHead + 1 && without[end - 1].trim() === "") end--
+  return [...without.slice(0, end), card, ...without.slice(end)].join("\n")
+}
+
+/** Add a `- [ ] [[base]]` card under a column (default first column) of a board. */
+function addCard(raw: string, taskBase: string, column?: string): string {
+  const lines = raw.split(/\r?\n/)
+  let headIdx = -1
+  for (let i = 0; i < lines.length; i++) {
+    if (/^%%/.test(lines[i])) break
+    const h = /^##\s+(.*)$/.exec(lines[i])
+    if (h && (!column || h[1].trim().toLowerCase() === column.toLowerCase())) {
+      headIdx = i
+      if (!column) break // first column
+      if (column) break
+    }
+  }
+  if (headIdx < 0) {
+    // no columns yet — create the default one
+    return lines.join("\n").replace(/\s*$/, "") + `\n\n## ${column ?? "待办"}\n\n- [ ] [[${taskBase}]]\n`
+  }
+  let end = lines.length
+  for (let i = headIdx + 1; i < lines.length; i++) {
+    if (/^##\s+/.test(lines[i]) || /^%%/.test(lines[i])) {
+      end = i
+      break
+    }
+  }
+  while (end > headIdx + 1 && lines[end - 1].trim() === "") end--
+  return [...lines.slice(0, end), `- [ ] [[${taskBase}]]`, ...lines.slice(end)].join("\n")
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Path normalization — Obsidian sends abs paths with OS seps; node scan too.
+// Key everything on a normalized (forward-slash, lowercase) form.
+// ═════════════════════════════════════════════════════════════════════════════
+
+const norm = (p: string): string => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Task model + registry
+// ═════════════════════════════════════════════════════════════════════════════
 
 export type TaskMeta = {
+  /** basename without extension — the Obsidian [[link]] target, used as id. */
   id: string
   title: string
   project: string
   type: string
-  status: TaskStatus
-  priority: string
+  /** kanban column the card sits in = status. */
+  status: string
+  board: string // board file path
   sessions: string[]
   pha_issue: string
-  /** absolute Windows path of the task md */
-  path: string
+  todos: { done: number; total: number }
+  path: string // absolute path of the task file
   mtimeMs: number
-  updated: string
 }
 
-function normStatus(v: unknown): TaskStatus {
-  const s = String(v ?? "").trim() as TaskStatus
-  return (ALL_STATUS as string[]).includes(s) ? s : "inbox"
+type Registry = {
+  tasks: Map<string, TaskMeta> // normPath → meta
+  byId: Map<string, string> // normBasename → normPath (ambiguity: last wins, logged)
+  boards: Array<{ path: string; columns: string[] }>
+  builtAt: number
 }
 
-function taskMetaOf(path: string, project: string, fm: Frontmatter, mtimeMs: number): TaskMeta {
-  const base = basename(path).replace(/\.md$/i, "")
-  return {
-    id: String(fm.id || base),
-    title: String(fm.title || base),
-    project,
-    type: String(fm.type || "未分类"),
-    status: normStatus(fm.status),
-    priority: String(fm.priority || ""),
-    sessions: Array.isArray(fm.sessions) ? fm.sessions : [],
-    pha_issue: String(fm.pha_issue || ""),
-    path,
-    mtimeMs,
-    updated: String(fm.updated || ""),
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Kanban aggregation — rewrite ONLY between the taskflow markers.
-// ─────────────────────────────────────────────────────────────────────────────
-
-const KB_BEGIN = "<!-- taskflow:begin 此区块由 taskflow 自动生成,请勿手动编辑 -->"
-const KB_END = "<!-- taskflow:end -->"
-
-function mdCell(s: string): string {
-  return s.replace(/\|/g, "\\|").replace(/\r?\n/g, " ")
-}
-
-export function buildKanbanSection(tasks: TaskMeta[]): string {
-  const rank = (t: TaskMeta) => STATUS_ORDER.indexOf(t.status)
-  const byType = new Map<string, TaskMeta[]>()
-  for (const t of tasks) {
-    const arr = byType.get(t.type) ?? []
-    arr.push(t)
-    byType.set(t.type, arr)
-  }
-  const lines: string[] = [KB_BEGIN, ""]
-  const active = tasks.filter((t) => !["done", "synced"].includes(t.status)).length
-  lines.push(`> 任务 ${tasks.length} 项 · 进行中/待处理 ${active} 项 · 更新于 ${new Date().toLocaleString()}`)
-  lines.push("")
-  for (const [type, list] of [...byType.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-    list.sort((a, b) => rank(a) - rank(b) || a.priority.localeCompare(b.priority))
-    lines.push(`### ${type} (${list.length})`)
-    lines.push("")
-    lines.push("| 状态 | 任务 | P | session | PHA | 更新 |")
-    lines.push("| --- | --- | --- | --- | --- | --- |")
-    for (const t of list) {
-      const file = basename(t.path).replace(/\.md$/i, "")
-      const pha = t.pha_issue ? (/^https?:/.test(t.pha_issue) ? `[链接](${t.pha_issue})` : mdCell(t.pha_issue)) : "—"
-      lines.push(
-        `| ${STATUS_EMOJI[t.status]} ${STATUS_LABEL[t.status]} | [[${mdCell(file)}]] | ${mdCell(t.priority) || "—"} | ${
-          t.sessions.length || "—"
-        } | ${pha} | ${mdCell(t.updated) || "—"} |`,
-      )
-    }
-    lines.push("")
-  }
-  lines.push(KB_END)
-  return lines.join("\n")
-}
-
-export function applyKanban(existing: string | undefined, section: string, projectName: string): string {
-  if (!existing || !existing.trim()) {
-    return [
-      `# ${projectName} · 项目看板`,
-      "",
-      "## 项目说明",
-      "",
-      "（人工区：项目描述、里程碑、硬性约束——taskflow 不会改动这里）",
-      "",
-      "## 任务总表",
-      "",
-      section,
-      "",
-    ].join("\n")
-  }
-  const b = existing.indexOf(KB_BEGIN)
-  const e = existing.indexOf(KB_END)
-  if (b >= 0 && e > b) {
-    return existing.slice(0, b) + section + existing.slice(e + KB_END.length)
-  }
-  return existing.replace(/\s*$/, "") + "\n\n## 任务总表\n\n" + section + "\n"
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Prompts — the contract injected as the FIRST USER MESSAGE of each session
-// (this codebase's convention; sessions have no system-prompt injection).
-// ─────────────────────────────────────────────────────────────────────────────
-
-const TOOL_CONTRACT = [
-  "你可以使用 win-host 提供的任务工具（MCP）读写任务文档：",
-  "- task_get(id) — 读任务文档全文",
-  "- task_update_status(id, status, note?) — 更新状态（可用: clarifying/ready/doing/review/blocked/synced；done 只能人工设置）",
-  "- task_append_log(id, content) — 向「执行日志」区追加一条记录（带时间戳）",
-  "- task_set_field(id, key, value) — 更新 priority/type/pha_issue 字段",
-  "若以上 task_* 工具在你的工具列表里不存在（win-host MCP 未接通），改用文件编辑达成同样效果：",
-  "直接修改任务文档——改 frontmatter 的 status/priority/type/pha_issue 字段、向「## 执行日志」小节追加条目。",
-  "文件本身就是接口，taskflow 会通过扫描感知你的修改；status 取值与上述白名单一致，同样不得设为 done。",
-  "文档分区规则：frontmatter 和「执行日志」由你维护；「目标/验收标准/人工备注」属于用户，禁止改写；「待澄清」区你写问题（Q:），用户写答案（A:）。",
-].join("\n")
-
-function clarifyPrompt(t: TaskMeta, doc: string, kanbanHuman: string): string {
-  return [
-    `【taskflow 澄清任务】任务 ${t.id}（项目 ${t.project}）刚被创建，请帮用户把它结构化。`,
-    "",
-    TOOL_CONTRACT,
-    "",
-    "你的工作：",
-    "1. 阅读下面的任务文档与项目背景，判断信息是否足以开工。",
-    "2. 信息足够 → 直接完善文档：补全「目标」「验收标准」（可编辑文件本身），用 task_set_field 修正 type/priority，然后 task_update_status(id, \"ready\")。",
-    "3. 信息不足 → 把关键问题写进文档的「## 待澄清」区（每行 `- Q: …` 空一行 `A:` 待用户填写，直接编辑文件），然后 task_update_status(id, \"clarifying\")，并用 notify_desktop 提醒用户回答。",
-    "4. 用户答完后会把 status 改回 inbox 触发你再次整理（届时把 Q/A 整合进目标/验收，置 ready）。",
-    "",
-    `## 任务文档（${t.path}）`,
-    "```markdown",
-    doc,
-    "```",
-    "",
-    "## 项目背景（看板人工区节选）",
-    kanbanHuman || "（无）",
-  ].join("\n")
-}
-
-function execPrompt(t: TaskMeta, doc: string): string {
-  return [
-    `【taskflow 执行任务】任务 ${t.id}（项目 ${t.project}）已就绪，本 session 负责完成它。`,
-    "",
-    TOOL_CONTRACT,
-    "",
-    "执行契约：",
-    "1. 开工前 task_append_log 记录你的计划；关键节点（发现/决策/产出）随时 append。",
-    "2. 严格对照「验收标准」工作；全部满足后 task_append_log 写总结，并 task_update_status(id, \"review\") 等用户验收。",
-    "3. 遇到无法推进的阻塞：task_update_status(id, \"blocked\", 原因)，并 notify_desktop 告知用户。",
-    "4. 永远不要把状态设为 done——那是用户验收后的人工操作。",
-    "",
-    `## 任务文档（${t.path}）`,
-    "```markdown",
-    doc,
-    "```",
-  ].join("\n")
-}
-
-function phaPrompt(t: TaskMeta, doc: string): string {
-  return [
-    `【taskflow 同步 PHA】任务 ${t.id} 已被用户验收（done），请把进度同步到内网 PHA。`,
-    "",
-    TOOL_CONTRACT,
-    "",
-    "步骤：",
-    "1. 用你已有的 PHA 推送工具，把该任务的标题、结论与关键进度（取自「执行日志」）推送/更新到 PHA。",
-    "2. 把返回的 issue 链接 task_set_field(id, \"pha_issue\", <url>)。",
-    "3. 完成后 task_update_status(id, \"synced\")；失败则 task_update_status(id, \"blocked\", 原因) 并 notify_desktop。",
-    "",
-    `## 任务文档（${t.path}）`,
-    "```markdown",
-    doc,
-    "```",
-  ].join("\n")
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// State + scanning
-// ─────────────────────────────────────────────────────────────────────────────
-
-type ActiveEntry = { sessionId: string; path: string; startedAt: number; notifiedAt?: number }
-type State = {
-  lastSeen: Record<string, { mtime: number; status: string }>
-  active: Record<string, ActiveEntry>
-  /** task id → last PHA dispatch ms (prevents re-firing while status stays done) */
-  phaAt: Record<string, number>
-}
-
-let state: State | undefined
-let statePath: string | undefined
+let reg: Registry = { tasks: new Map(), byId: new Map(), boards: [], builtAt: 0 }
 let pollTimer: ReturnType<typeof setTimeout> | undefined
 let pollStop = false
-let scanChain: Promise<unknown> = Promise.resolve()
-/** id → meta from the latest scan (tool/route lookups) */
-let index = new Map<string, TaskMeta>()
-
-function ensureState(ctx: HostContext): State {
-  if (!state) {
-    statePath = join(ctx.dataDir, "taskflow-state.json")
-    try {
-      state = JSON.parse(readFileSync(statePath, "utf8")) as State
-    } catch {
-      state = { lastSeen: {}, active: {}, phaAt: {} }
-    }
-    state.lastSeen ??= {}
-    state.active ??= {}
-    state.phaAt ??= {}
-  }
-  return state
-}
-
-function saveState(): void {
-  if (!state || !statePath) return
-  try {
-    mkdirSync(dirname(statePath), { recursive: true })
-    writeFileSync(statePath, JSON.stringify(state, null, 2), "utf8")
-  } catch (e) {
-    console.warn("[cap:taskflow] state write failed:", e)
-  }
-}
 
 function cfg(ctx: HostContext) {
   const c = ctx.config()
   return {
     vaultDir: String(c.vaultDir ?? "").trim(),
-    pollSeconds: Number(c.pollSeconds ?? 10),
-    autoClarify: c.autoClarify !== false && c.autoClarify !== "false",
-    autoStart: c.autoStart === true || c.autoStart === "true",
-    maxConcurrent: Math.max(1, Number(c.maxConcurrent ?? 2) || 2),
+    newTaskDir: String(c.newTaskDir ?? "").trim(),
+    doneColumns: String(c.doneColumns ?? "已完成,Done,完成")
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+    pollSeconds: Number(c.pollSeconds ?? 15),
     sessionModel: parseModelRef(String(c.sessionModel ?? "").trim()),
   }
 }
-
-/** "provider/model" → ModelRef; anything else → undefined (use default model). */
 function parseModelRef(s: string): ModelRef | undefined {
   const i = s.indexOf("/")
   if (i <= 0 || i >= s.length - 1) return undefined
   return { providerID: s.slice(0, i), modelID: s.slice(i + 1) }
 }
 
-function today(): string {
-  return new Date().toISOString().slice(0, 10)
-}
-
-/** Read + parse one task file; null when unparsable (e.g. Obsidian mid-save). */
-function readTask(path: string, project: string): { meta: TaskMeta; fm: Frontmatter; body: string } | null {
+/** Recursively list *.md under a dir (skips dot-dirs, node_modules). */
+function listMd(dir: string, out: string[] = []): string[] {
+  let entries: import("node:fs").Dirent[]
   try {
-    const raw = readFileSync(path, "utf8")
-    const parsed = parseFrontmatter(raw)
-    if (!parsed) return null
-    const mtimeMs = statSync(path).mtimeMs
-    return { meta: taskMetaOf(path, project, parsed.fm, mtimeMs), fm: parsed.fm, body: parsed.body }
-  } catch {
-    return null
-  }
-}
-
-/** Write a task back and suppress self-triggering (lastSeen updated to new mtime). */
-function writeTask(st: State, path: string, fm: Frontmatter, body: string): void {
-  fm.updated = today()
-  writeFileSync(path, serializeFrontmatter(fm, body), "utf8")
-  st.lastSeen[path] = { mtime: statSync(path).mtimeMs, status: String(fm.status ?? "") }
-}
-
-/** Enumerate all tasks under <vaultDir>/<project>/tasks/*.md. */
-function scanTasks(vaultDir: string): TaskMeta[] {
-  const out: TaskMeta[] = []
-  let projects: string[] = []
-  try {
-    projects = readdirSync(vaultDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory() && !d.name.startsWith("."))
-      .map((d) => d.name)
+    entries = readdirSync(dir, { withFileTypes: true })
   } catch {
     return out
   }
-  for (const project of projects) {
-    const dir = join(vaultDir, project, "tasks")
-    let files: string[] = []
-    try {
-      files = readdirSync(dir).filter((f) => f.toLowerCase().endsWith(".md"))
-    } catch {
-      continue // project without tasks/ — fine
-    }
-    for (const f of files) {
-      const t = readTask(join(dir, f), project)
-      if (t) out.push(t.meta)
-    }
+  for (const e of entries) {
+    if (e.name.startsWith(".") || e.name === "node_modules") continue
+    const p = join(dir, e.name)
+    if (e.isDirectory()) listMd(p, out)
+    else if (e.isFile() && e.name.toLowerCase().endsWith(".md")) out.push(p)
   }
-  index = new Map(out.map((t) => [t.id, t]))
   return out
 }
 
-function kanbanPath(vaultDir: string, project: string): string {
-  return join(vaultDir, project, "项目看板.md")
-}
-
-/** Human part of the kanban (everything above the taskflow markers). */
-function kanbanHumanPart(vaultDir: string, project: string): string {
-  try {
-    const raw = readFileSync(kanbanPath(vaultDir, project), "utf8")
-    const b = raw.indexOf(KB_BEGIN)
-    return (b >= 0 ? raw.slice(0, b) : raw).slice(0, 4000)
-  } catch {
-    return ""
+/** Rebuild the registry: discover boards, resolve their card links to files. */
+function buildRegistry(vaultDir: string): Registry {
+  const files = vaultDir && existsSync(vaultDir) ? listMd(vaultDir) : []
+  // basename → candidate paths (for [[link]] resolution)
+  const byBase = new Map<string, string[]>()
+  for (const f of files) {
+    const b = basename(f).replace(/\.md$/i, "").toLowerCase()
+    const arr = byBase.get(b) ?? []
+    arr.push(f)
+    byBase.set(b, arr)
   }
-}
-
-function rebuildKanban(st: State, vaultDir: string, project: string, tasks: TaskMeta[]): void {
-  const mine = tasks.filter((t) => t.project === project)
-  const path = kanbanPath(vaultDir, project)
-  let existing: string | undefined
-  try {
-    existing = readFileSync(path, "utf8")
-  } catch {
-    existing = undefined
-  }
-  const next = applyKanban(existing, buildKanbanSection(mine), project)
-  if (next !== existing) {
+  const boards: Array<{ path: string; raw: string; columns: BoardColumn[] }> = []
+  for (const f of files) {
+    let raw = ""
     try {
-      writeFileSync(path, next, "utf8")
-    } catch (e) {
-      console.warn("[cap:taskflow] kanban write failed:", e)
+      raw = readFileSync(f, "utf8")
+    } catch {
+      continue
+    }
+    if (isBoardFile(raw)) boards.push({ path: f, raw, columns: parseBoard(raw) })
+  }
+  const tasks = new Map<string, TaskMeta>()
+  const byId = new Map<string, string>()
+  for (const board of boards) {
+    const boardProject = boardProjectName(board.path, board.raw, vaultDir)
+    for (const col of board.columns) {
+      for (const card of col.cards) {
+        const cands = byBase.get(card.link.toLowerCase())
+        const file = cands && cands.length ? cands[0] : undefined
+        if (!file) continue // dangling link — not a resolvable task
+        const np = norm(file)
+        if (tasks.has(np)) {
+          // same task linked on multiple boards/columns — first wins for status
+          continue
+        }
+        const meta = readTaskMeta(file, board.path, col.name, boardProject)
+        if (meta) {
+          tasks.set(np, meta)
+          byId.set(meta.id.toLowerCase(), np)
+        }
+      }
     }
   }
-  void st
+  return {
+    tasks,
+    byId,
+    boards: boards.map((b) => ({ path: b.path, columns: b.columns.map((c) => c.name) })),
+    builtAt: Date.now(),
+  }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Session orchestration
-// ─────────────────────────────────────────────────────────────────────────────
+/** Project name for a board: frontmatter.project → containing folder → filename. */
+function boardProjectName(path: string, raw: string, vaultDir: string): string {
+  const p = parseFrontmatter(raw)
+  const fmProj = p && typeof p.fm.project === "string" ? p.fm.project : ""
+  if (fmProj) return fmProj
+  const rel = norm(path).startsWith(norm(vaultDir) + "/") ? path.slice(vaultDir.length + 1) : path
+  const parts = rel.split(/[\\/]/)
+  return parts.length > 1 ? parts[0] : basename(path).replace(/\.md$/i, "")
+}
 
-async function startSessionFor(
-  ctx: HostContext,
-  taskId: string,
-  kind: "clarify" | "exec" | "pha",
-): Promise<{ ok: boolean; sessionId?: string; error?: string }> {
-  const st = ensureState(ctx)
-  const conf = cfg(ctx)
-  const meta = index.get(taskId)
-  if (!meta) return { ok: false, error: `task_not_found: ${taskId}` }
-  const t = readTask(meta.path, meta.project)
-  if (!t) return { ok: false, error: "task_unreadable" }
-  const doc = readFileSync(meta.path, "utf8")
-
-  if (kind === "exec") {
-    const running = Object.entries(st.active).filter(([id]) => index.get(id)?.status === "doing").length
-    if (running >= conf.maxConcurrent) {
-      return { ok: false, error: `并发已达上限(${conf.maxConcurrent})，请先完成进行中的任务` }
-    }
+function readTaskMeta(file: string, board: string, column: string, boardProject: string): TaskMeta | null {
+  let raw = ""
+  try {
+    raw = readFileSync(file, "utf8")
+  } catch {
+    return null
   }
+  const parsed = parseFrontmatter(raw)
+  const fm = parsed?.fm ?? {}
+  const body = parsed?.body ?? raw
+  const id = basename(file).replace(/\.md$/i, "")
+  const h1 = /^#\s+(.+)$/m.exec(body)?.[1]?.trim()
+  let mtimeMs = 0
+  try {
+    mtimeMs = statSync(file).mtimeMs
+  } catch {
+    /* ignore */
+  }
+  return {
+    id,
+    title: h1 || (typeof fm.title === "string" ? fm.title : "") || id,
+    project: (typeof fm.project === "string" && fm.project) || boardProject,
+    type: (typeof fm.type === "string" && fm.type) || "",
+    status: column,
+    board,
+    sessions: Array.isArray(fm.sessions) ? fm.sessions : [],
+    pha_issue: typeof fm.pha_issue === "string" ? fm.pha_issue : "",
+    todos: (() => {
+      const t = parseTodos(body)
+      return { done: t.done, total: t.total }
+    })(),
+    path: file,
+    mtimeMs,
+  }
+}
 
-  // PHA 同步优先复用任务已有 session（上下文都在），否则新建。
+function refreshRegistry(ctx: HostContext): Registry {
+  reg = buildRegistry(cfg(ctx).vaultDir)
+  return reg
+}
+
+/** Resolve an id-or-path to a task file + fresh parse. Rebuilds if stale/miss. */
+function resolveTask(ctx: HostContext, idOrPath: string): { meta: TaskMeta; fm: Frontmatter; body: string; raw: string } | null {
+  let np = norm(idOrPath)
+  let path = reg.tasks.has(np) ? reg.tasks.get(np)!.path : reg.byId.get(idOrPath.toLowerCase())
+  if (!path) {
+    refreshRegistry(ctx)
+    np = norm(idOrPath)
+    path = reg.tasks.has(np) ? reg.tasks.get(np)!.path : reg.byId.get(idOrPath.toLowerCase())
+  }
+  if (!path) return null
+  const meta = reg.tasks.get(norm(path))
+  if (!meta) return null
+  let raw = ""
+  try {
+    raw = readFileSync(path, "utf8")
+  } catch {
+    return null
+  }
+  const parsed = parseFrontmatter(raw)
+  return { meta, fm: parsed?.fm ?? {}, body: parsed?.body ?? raw, raw }
+}
+
+/** Write a task file back (frontmatter + body); refresh that meta in the registry. */
+function writeTask(t: { meta: TaskMeta }, fm: Frontmatter, body: string): void {
+  writeFileSync(t.meta.path, serializeFrontmatter(fm, body), "utf8")
+  const fresh = readTaskMeta(t.meta.path, t.meta.board, t.meta.status, t.meta.project)
+  if (fresh) reg.tasks.set(norm(t.meta.path), fresh)
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Template + launch contract
+// ═════════════════════════════════════════════════════════════════════════════
+
+function taskTemplate(input: { title: string; project: string; type: string; todos: string[]; date: string }): string {
+  const fm: Frontmatter = {
+    project: input.project,
+    type: input.type,
+    sessions: [],
+    pha_issue: "",
+    created: input.date,
+  }
+  const todos = (input.todos.length ? input.todos : ["（待补充）"]).map((t) => `- [ ] ${t}`).join("\n")
+  const body = [`# ${input.title}`, "", "## 待办", todos, "", "## 进展", "", "## 问题与解决", "", "## 备注", ""].join("\n")
+  return serializeFrontmatter(fm, body)
+}
+
+function launchContract(meta: TaskMeta, sessionId: string, docText: string): string {
+  return [
+    `【taskflow】你在处理任务「${meta.title}」（id: ${meta.id}，项目 ${meta.project}）。你本次的 session id 是 ${sessionId}。`,
+    "",
+    "可用工具（win-host MCP）——只能通过它们写文档，保证格式统一：",
+    `- task_todo(id="${meta.id}", action, text)：勾选/新增待办（action: check/uncheck/add）`,
+    `- task_log(id="${meta.id}", text, session="${sessionId}")：向「进展」追加一行`,
+    `- task_issue(id="${meta.id}", problem, solution)：向「问题与解决」追加一条`,
+    `- task_set_status(id="${meta.id}", column)：移动看板卡片（列见看板）`,
+    `- task_get(id="${meta.id}")：读文档全文`,
+    "（若这些工具不在你的工具列表里，就直接编辑任务文档的同名小节，格式保持一致。）",
+    "",
+    "规则：",
+    "1. 只做「待办」里列出的事；完成一项 → task_todo check 勾掉它 + task_log 记一行进展。",
+    "2. 遇到问题与解决办法 → task_issue 记录（problem/solution 两段）。",
+    "3. 不要改写「备注」以及其它用户区域；不要动 PHA（同步由用户手动触发）。",
+    "4. 阶段性完成后在「进展」写一句小结。",
+    "",
+    "## 当前任务文档",
+    "```markdown",
+    docText,
+    "```",
+  ].join("\n")
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Session orchestration (manual only — no auto dispatch)
+// ═════════════════════════════════════════════════════════════════════════════
+
+async function launch(
+  ctx: HostContext,
+  idOrPath: string,
+  mode: "continue" | "new",
+): Promise<{ ok: boolean; sessionId?: string; error?: string }> {
+  const t = resolveTask(ctx, idOrPath)
+  if (!t) return { ok: false, error: `task_not_found: ${idOrPath}` }
+  const conf = cfg(ctx)
+  const projectDir = dirname(t.meta.path)
+
   let sessionId: string | undefined
-  const projectDir = join(conf.vaultDir, meta.project)
-  if (kind === "pha" && t.meta.sessions.length > 0) {
+  let fresh = false
+  if (mode === "continue" && t.meta.sessions.length > 0) {
     sessionId = t.meta.sessions[t.meta.sessions.length - 1]
   } else {
     const created = await ctx.native.chat.createSession(projectDir)
     if (!created.ok || !created.sessionId) return { ok: false, error: created.error ?? "createSession failed" }
     sessionId = created.sessionId
-    t.fm.sessions = [...t.meta.sessions, sessionId]
+    fresh = true
   }
 
-  if (kind === "clarify") t.fm.status = "clarifying"
-  if (kind === "exec") {
-    t.fm.status = "doing"
-    st.active[taskId] = { sessionId, path: meta.path, startedAt: Date.now() }
+  if (fresh) {
+    t.fm.sessions = [...(Array.isArray(t.fm.sessions) ? t.fm.sessions : []), sessionId]
+    writeTask(t, t.fm, t.body)
+    ctx.emit("taskflow:changed", { id: t.meta.id })
   }
-  if (kind === "pha") st.phaAt[taskId] = Date.now()
-  writeTask(st, meta.path, t.fm, t.body)
-  saveState()
-  ctx.emit("taskflow:changed", { id: taskId, kind })
 
-  const prompt =
-    kind === "clarify"
-      ? clarifyPrompt(t.meta, doc, kanbanHumanPart(conf.vaultDir, meta.project))
-      : kind === "exec"
-        ? execPrompt(t.meta, doc)
-        : phaPrompt(t.meta, doc)
-
-  // fire-and-forget：session.prompt 直到 agent 回复完成才返回，不能阻塞轮询
+  const doc = readFileSync(t.meta.path, "utf8")
   void ctx.native.chat
-    .send({ text: prompt, sessionId, model: conf.sessionModel, directory: projectDir })
-    .catch((e) => ctx.log(`session send failed (task ${taskId})`, e))
-
+    .send({ text: launchContract(t.meta, sessionId, doc), sessionId, model: conf.sessionModel, directory: projectDir })
+    .catch((e) => ctx.log(`launch send failed (${t.meta.id})`, e))
   return { ok: true, sessionId }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Scan tick — detect status transitions & dispatch
-// ─────────────────────────────────────────────────────────────────────────────
-
-async function doScan(ctx: HostContext): Promise<{ tasks: TaskMeta[]; transitions: number }> {
-  const st = ensureState(ctx)
-  const conf = cfg(ctx)
-  if (!conf.vaultDir || !existsSync(conf.vaultDir)) return { tasks: [], transitions: 0 }
-
-  const tasks = scanTasks(conf.vaultDir)
-  const touchedProjects = new Set<string>()
-  let transitions = 0
-
-  for (const t of tasks) {
-    const seen = st.lastSeen[t.path]
-    if (seen && seen.mtime === t.mtimeMs) continue // untouched（含自写抑制）
-    const prev = seen?.status
-    st.lastSeen[t.path] = { mtime: t.mtimeMs, status: t.status }
-    touchedProjects.add(t.project)
-    if (prev === t.status) continue // 内容改了但状态没变 → 只重建看板
-    transitions++
-    ctx.log(`task ${t.id}: ${prev ?? "(new)"} → ${t.status}`)
-    ctx.emit("taskflow:changed", { id: t.id, status: t.status })
-
-    if (t.status === "inbox") {
-      if (conf.autoClarify) {
-        void startSessionFor(ctx, t.id, "clarify")
-      } else {
-        ctx.native.showToast({ title: "新任务待澄清", message: `${t.id} ${t.title}`, level: "info" })
-      }
-    } else if (t.status === "ready") {
-      if (conf.autoStart) {
-        void startSessionFor(ctx, t.id, "exec")
-      } else {
-        ctx.native.showToast({ title: "任务就绪，可启动", message: `${t.id} ${t.title}`, level: "info" })
-      }
-    } else if (t.status === "doing" && !st.active[t.id]) {
-      // 人在 Obsidian 直接把 status 改成 doing = 手动启动信号
-      void startSessionFor(ctx, t.id, "exec")
-    } else if (t.status === "review") {
-      ctx.native.showToast({ title: "任务待验收", message: `${t.id} ${t.title}`, level: "info" })
-    } else if (t.status === "done") {
-      const last = st.phaAt[t.id] ?? 0
-      if (Date.now() - last > 30 * 60_000) void startSessionFor(ctx, t.id, "pha")
-    } else if (t.status === "blocked") {
-      ctx.native.showToast({ title: "任务阻塞", message: `${t.id} ${t.title}`, level: "warn" })
-    }
-  }
-
-  // 清理 active（任务不再 doing 或文件消失）；doing 看门狗
-  for (const [id, a] of Object.entries(st.active)) {
-    const t = index.get(id)
-    if (!t || t.status !== "doing") {
-      delete st.active[id]
-      continue
-    }
-    if (Date.now() - a.startedAt < 10 * 60_000) continue
-    if (a.notifiedAt && Date.now() - a.notifiedAt < 30 * 60_000) continue
-    try {
-      const entries = await ctx.native.chat.monitor(24)
-      const e = entries.find((x) => x.id === a.sessionId)
-      if (e && !e.busy) {
-        a.notifiedAt = Date.now()
-        ctx.native.showToast({
-          title: "任务可能悬停",
-          message: `${id} 的会话已空闲，但状态仍是「进行中」，请检查`,
-          level: "warn",
-        })
-      }
-    } catch {
-      /* opencode 不可达 — 下轮再看 */
-    }
-  }
-
-  for (const p of touchedProjects) rebuildKanban(st, conf.vaultDir, p, tasks)
-  if (touchedProjects.size > 0 || transitions > 0) saveState()
-  return { tasks, transitions }
+function associate(ctx: HostContext, idOrPath: string, sessionId: string, add: boolean): { ok: boolean; error?: string; sessions?: string[] } {
+  const t = resolveTask(ctx, idOrPath)
+  if (!t) return { ok: false, error: `task_not_found: ${idOrPath}` }
+  const cur = Array.isArray(t.fm.sessions) ? t.fm.sessions : []
+  const next = add ? [...new Set([...cur, sessionId])] : cur.filter((s) => s !== sessionId)
+  t.fm.sessions = next
+  writeTask(t, t.fm, t.body)
+  ctx.emit("taskflow:changed", { id: t.meta.id, sessions: next })
+  return { ok: true, sessions: next }
 }
 
-function scan(ctx: HostContext): Promise<{ tasks: TaskMeta[]; transitions: number }> {
-  const run = scanChain.then(() => doScan(ctx))
-  scanChain = run.catch(() => undefined)
-  return run
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Agent tools (win-host MCP)
-// ─────────────────────────────────────────────────────────────────────────────
-
-function findTask(id: string, ctx: HostContext): { meta: TaskMeta; fm: Frontmatter; body: string } | null {
-  let meta = index.get(id)
-  if (!meta) {
-    scanTasks(cfg(ctx).vaultDir) // lazy refresh（tools 可能先于首轮扫描被调用）
-    meta = index.get(id)
-  }
-  if (!meta) return null
-  return readTask(meta.path, meta.project)
-}
+// ═════════════════════════════════════════════════════════════════════════════
+// Agent tools (win-host MCP) — format-enforcing; this is where standardization
+// actually comes from (the agent CANNOT free-form the doc).
+// ═════════════════════════════════════════════════════════════════════════════
 
 const tools: McpToolDef[] = [
   {
     name: "task_get",
-    description: "读取一个 taskflow 任务文档的全文（frontmatter + 正文）。",
-    inputSchema: {
-      type: "object",
-      properties: { id: { type: "string", description: "任务 id，如 T-0013" } },
-      required: ["id"],
-    },
+    description: "读取一个 taskflow 任务文档的全文（id = 文档文件名，如「低温启动bug」）。",
+    inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
     async handler(args, ctx) {
-      const t = findTask(String(args.id ?? ""), ctx)
+      const t = resolveTask(ctx, String(args.id ?? ""))
       if (!t) return { text: `task not found: ${args.id}`, isError: true }
-      return { text: readFileSync(t.meta.path, "utf8") }
+      return { text: t.raw }
     },
   },
   {
-    name: "task_update_status",
+    name: "task_create",
     description:
-      "更新任务状态。可用值: clarifying|ready|doing|review|blocked|synced。done 是用户验收专属，工具不可设置。可附 note（会记入执行日志）。",
+      "按统一模板新建一个任务文档，并在其项目看板的第一列插入卡片。用于规划类会话里拆解任务。人日常建任务用 Obsidian 模板即可，不必用此工具。",
     inputSchema: {
       type: "object",
       properties: {
-        id: { type: "string" },
-        status: { type: "string", enum: AGENT_STATUS },
-        note: { type: "string", description: "可选，一句话原因/说明" },
+        title: { type: "string", description: "任务标题" },
+        project: { type: "string", description: "所属项目（用于选择看板与归类）" },
+        type: { type: "string", description: "任务类型，如 bug修复/硬件适配/产测" },
+        todos: { type: "array", items: { type: "string" }, description: "初始待办清单" },
       },
-      required: ["id", "status"],
+      required: ["title", "project"],
     },
     async handler(args, ctx) {
-      const st = ensureState(ctx)
-      const status = String(args.status ?? "") as TaskStatus
-      if (!AGENT_STATUS.includes(status)) return { text: `status not allowed: ${status}`, isError: true }
-      const t = findTask(String(args.id ?? ""), ctx)
-      if (!t) return { text: `task not found: ${args.id}`, isError: true }
-      t.fm.status = status
-      let body = t.body
-      if (args.note && String(args.note).trim()) {
-        body = appendLogSection(body, `- ${new Date().toLocaleString()} 状态 → ${status}：${String(args.note).trim()}`)
-      }
-      writeTask(st, t.meta.path, t.fm, body)
       const conf = cfg(ctx)
-      rebuildKanban(st, conf.vaultDir, t.meta.project, scanTasks(conf.vaultDir))
-      saveState()
-      ctx.emit("taskflow:changed", { id: t.meta.id, status })
-      return { text: `ok: ${t.meta.id} → ${status}` }
+      if (!conf.vaultDir) return { text: "vaultDir 未配置", isError: true }
+      const title = String(args.title ?? "").trim()
+      if (!title) return { text: "title required", isError: true }
+      const dir = conf.newTaskDir || join(conf.vaultDir, "收件箱")
+      mkdirSync(dir, { recursive: true })
+      const safe = title.replace(/[\\/:*?"<>|]/g, "·")
+      let file = join(dir, `${safe}.md`)
+      let n = 2
+      while (existsSync(file)) file = join(dir, `${safe}-${n++}.md`)
+      const date = new Date().toISOString().slice(0, 10)
+      writeFileSync(
+        file,
+        taskTemplate({
+          title,
+          project: String(args.project ?? ""),
+          type: String(args.type ?? ""),
+          todos: Array.isArray(args.todos) ? args.todos.map(String) : [],
+          date,
+        }),
+        "utf8",
+      )
+      // add card to the project's board (first board matching project, else first board)
+      refreshRegistry(ctx)
+      const board =
+        reg.boards.find((b) => boardProjectName(b.path, safeRead(b.path), conf.vaultDir) === String(args.project))?.path ??
+        reg.boards[0]?.path
+      if (board) {
+        try {
+          writeFileSync(board, addCard(readFileSync(board, "utf8"), basename(file).replace(/\.md$/i, "")), "utf8")
+        } catch (e) {
+          ctx.log("task_create: add card failed", e)
+        }
+      }
+      refreshRegistry(ctx)
+      ctx.emit("taskflow:changed", { id: basename(file).replace(/\.md$/i, "") })
+      return {
+        text: `created: ${basename(file)}${board ? "（已加入看板）" : "（未找到看板，请手动把 [[链接]] 加到看板）"}`,
+      }
     },
   },
   {
-    name: "task_append_log",
-    description: "向任务文档的「执行日志」区追加一条 Markdown 记录（自动带时间戳）。",
+    name: "task_todo",
+    description: "勾选/取消/新增任务待办。action: check(完成) | uncheck(取消) | add(新增)。text 是待办文本（check 时做包含匹配）。",
     inputSchema: {
       type: "object",
       properties: {
         id: { type: "string" },
-        content: { type: "string", description: "Markdown 内容（发现/决策/产出/总结）" },
+        action: { type: "string", enum: ["check", "uncheck", "add"] },
+        text: { type: "string" },
       },
-      required: ["id", "content"],
+      required: ["id", "action", "text"],
     },
     async handler(args, ctx) {
-      const st = ensureState(ctx)
-      const t = findTask(String(args.id ?? ""), ctx)
+      const t = resolveTask(ctx, String(args.id ?? ""))
       if (!t) return { text: `task not found: ${args.id}`, isError: true }
-      const entry = `### ${new Date().toLocaleString()}\n\n${String(args.content ?? "").trim()}`
-      writeTask(st, t.meta.path, t.fm, appendLogSection(t.body, entry))
-      return { text: `ok: log appended to ${t.meta.id}` }
+      const action = String(args.action) as "check" | "uncheck" | "add"
+      const next = editTodo(t.body, action, String(args.text ?? ""))
+      if (next === t.body && action !== "add") return { text: `没找到匹配的待办：${args.text}`, isError: true }
+      writeTask(t, t.fm, next)
+      ctx.emit("taskflow:changed", { id: t.meta.id })
+      return { text: `ok: ${action} ${args.text}` }
     },
   },
   {
-    name: "task_set_field",
-    description: "更新任务 frontmatter 字段。仅允许 priority / type / pha_issue。",
+    name: "task_log",
+    description: "向任务「进展」区追加一行记录（自动带时间戳；session 传你的 session id 以便回溯）。",
     inputSchema: {
       type: "object",
-      properties: {
-        id: { type: "string" },
-        key: { type: "string", enum: ["priority", "type", "pha_issue"] },
-        value: { type: "string" },
-      },
-      required: ["id", "key", "value"],
+      properties: { id: { type: "string" }, text: { type: "string" }, session: { type: "string" } },
+      required: ["id", "text"],
     },
     async handler(args, ctx) {
-      const st = ensureState(ctx)
-      const key = String(args.key ?? "")
-      if (!["priority", "type", "pha_issue"].includes(key)) return { text: `field not allowed: ${key}`, isError: true }
-      const t = findTask(String(args.id ?? ""), ctx)
+      const t = resolveTask(ctx, String(args.id ?? ""))
       if (!t) return { text: `task not found: ${args.id}`, isError: true }
-      t.fm[key] = String(args.value ?? "")
-      writeTask(st, t.meta.path, t.fm, t.body)
-      return { text: `ok: ${t.meta.id}.${key} = ${args.value}` }
+      const stamp = new Date().toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
+      const sess = String(args.session ?? "").trim()
+      const line = `- ${stamp}${sess ? ` · ${sess.slice(-6)}` : ""} · ${String(args.text ?? "").trim().replace(/\s+/g, " ")}`
+      writeTask(t, t.fm, appendToSection(t.body, "进展", line))
+      ctx.emit("taskflow:changed", { id: t.meta.id })
+      return { text: "ok: 进展已记录" }
+    },
+  },
+  {
+    name: "task_issue",
+    description: "向任务「问题与解决」区追加一条（problem/solution 两段式）。",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string" }, problem: { type: "string" }, solution: { type: "string" } },
+      required: ["id", "problem", "solution"],
+    },
+    async handler(args, ctx) {
+      const t = resolveTask(ctx, String(args.id ?? ""))
+      if (!t) return { text: `task not found: ${args.id}`, isError: true }
+      const entry = [
+        `- **问题**：${String(args.problem ?? "").trim()}`,
+        `  **解决**：${String(args.solution ?? "").trim()}`,
+      ].join("\n")
+      writeTask(t, t.fm, appendToSection(t.body, "问题与解决", entry))
+      ctx.emit("taskflow:changed", { id: t.meta.id })
+      return { text: "ok: 已记录问题与解决" }
+    },
+  },
+  {
+    name: "task_set_status",
+    description: "移动任务在看板上的卡片到指定列（= 改状态）。column 必须是该看板已有的列名。",
+    inputSchema: { type: "object", properties: { id: { type: "string" }, column: { type: "string" } }, required: ["id", "column"] },
+    async handler(args, ctx) {
+      const t = resolveTask(ctx, String(args.id ?? ""))
+      if (!t) return { text: `task not found: ${args.id}`, isError: true }
+      const conf = cfg(ctx)
+      const column = String(args.column ?? "").trim()
+      let boardRaw = ""
+      try {
+        boardRaw = readFileSync(t.meta.board, "utf8")
+      } catch {
+        return { text: "board unreadable", isError: true }
+      }
+      const checked = conf.doneColumns.includes(column.toLowerCase())
+      const next = moveCard(boardRaw, t.meta.id, column, checked)
+      if (!next) return { text: `移动失败：看板里没有卡片或列「${column}」`, isError: true }
+      writeFileSync(t.meta.board, next, "utf8")
+      refreshRegistry(ctx)
+      ctx.emit("taskflow:changed", { id: t.meta.id, status: column })
+      return { text: `ok: ${t.meta.id} → ${column}` }
+    },
+  },
+  {
+    name: "task_normalize",
+    description: "非破坏性规范化一篇任务文档：补齐缺失的 frontmatter 字段与模板小节，不改动任何已有内容。",
+    inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+    async handler(args, ctx) {
+      const t = resolveTask(ctx, String(args.id ?? ""))
+      if (!t) return { text: `task not found: ${args.id}`, isError: true }
+      const fm = { ...t.fm }
+      for (const [k, dv] of Object.entries({ project: t.meta.project, type: "", sessions: [], pha_issue: "" })) {
+        if (fm[k] === undefined) fm[k] = dv as string | string[]
+      }
+      writeTask(t, fm, ensureSections(t.body))
+      ctx.emit("taskflow:changed", { id: t.meta.id })
+      return { text: "ok: 已补齐 frontmatter 与小节（未改动原内容）" }
     },
   },
 ]
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Routes (panel)
-// ─────────────────────────────────────────────────────────────────────────────
+function safeRead(p: string): string {
+  try {
+    return readFileSync(p, "utf8")
+  } catch {
+    return ""
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Routes (panels + Obsidian plugin)
+// ═════════════════════════════════════════════════════════════════════════════
 
 const routes: RouteDef[] = [
   {
@@ -763,98 +783,122 @@ const routes: RouteDef[] = [
     path: "/tasks",
     async handler(_req, ctx) {
       const conf = cfg(ctx)
-      if (!conf.vaultDir) return { body: { ok: false, error: "vaultDir 未配置（管理页 → 任务看板）", tasks: [] } }
-      const tasks = scanTasks(conf.vaultDir)
-      return { body: { ok: true, tasks } }
+      if (!conf.vaultDir) return { body: { ok: false, error: "vaultDir 未配置（管理 → 任务看板）", tasks: [], boards: [] } }
+      refreshRegistry(ctx)
+      return {
+        body: {
+          ok: true,
+          tasks: [...reg.tasks.values()],
+          boards: reg.boards,
+          doneColumns: conf.doneColumns,
+        },
+      }
     },
   },
   {
     method: "POST",
     path: "/scan",
     async handler(_req, ctx) {
-      const r = await scan(ctx)
-      return { body: { ok: true, count: r.tasks.length, transitions: r.transitions } }
+      refreshRegistry(ctx)
+      return { body: { ok: true, count: reg.tasks.size } }
     },
   },
   {
+    // Obsidian plugin posts the active file's ABSOLUTE path; we resolve whether
+    // it's a task and broadcast taskflow:focus so the console reacts.
     method: "POST",
-    path: "/task/start",
+    path: "/focus",
     async handler(req, ctx) {
-      await scan(ctx) // 确保 index 新鲜
-      const r = await startSessionFor(ctx, String(req.body?.id ?? ""), "exec")
-      return { body: r, status: r.ok ? 200 : 400 }
-    },
-  },
-  {
-    method: "POST",
-    path: "/task/sync-pha",
-    async handler(req, ctx) {
-      await scan(ctx)
-      const r = await startSessionFor(ctx, String(req.body?.id ?? ""), "pha")
-      return { body: r, status: r.ok ? 200 : 400 }
-    },
-  },
-  {
-    method: "POST",
-    path: "/task/set-status",
-    async handler(req, ctx) {
-      const st = ensureState(ctx)
-      const id = String(req.body?.id ?? "")
-      const status = normStatus(req.body?.status)
-      const t = findTask(id, ctx)
-      if (!t) return { status: 404, body: { ok: false, error: `task not found: ${id}` } }
-      t.fm.status = status
-      writeTask(st, t.meta.path, t.fm, t.body)
-      const conf = cfg(ctx)
-      rebuildKanban(st, conf.vaultDir, t.meta.project, scanTasks(conf.vaultDir))
-      saveState()
-      ctx.emit("taskflow:changed", { id, status })
-      // done 走正常状态机（下一轮扫描会触发 PHA）；这里直接派发省一轮等待
-      if (status === "done") {
-        const last = st.phaAt[id] ?? 0
-        if (Date.now() - last > 30 * 60_000) void startSessionFor(ctx, id, "pha")
+      const path = String(req.body?.path ?? "")
+      if (!path) {
+        ctx.emit("taskflow:focus", { found: false })
+        return { body: { ok: true, found: false } }
       }
-      return { body: { ok: true } }
+      let meta = reg.tasks.get(norm(path))
+      if (!meta) {
+        refreshRegistry(ctx)
+        meta = reg.tasks.get(norm(path))
+      }
+      if (!meta) {
+        ctx.emit("taskflow:focus", { found: false, path })
+        return { body: { ok: true, found: false } }
+      }
+      const payload = {
+        found: true,
+        id: meta.id,
+        title: meta.title,
+        project: meta.project,
+        status: meta.status,
+        sessions: meta.sessions,
+        todos: meta.todos,
+      }
+      ctx.emit("taskflow:focus", payload)
+      return { body: { ok: true, ...payload } }
+    },
+  },
+  {
+    method: "POST",
+    path: "/launch",
+    async handler(req, ctx) {
+      const id = String(req.body?.id ?? req.body?.path ?? "")
+      const mode = req.body?.mode === "new" ? "new" : "continue"
+      const r = await launch(ctx, id, mode)
+      return { body: r, status: r.ok ? 200 : 400 }
+    },
+  },
+  {
+    method: "POST",
+    path: "/associate",
+    async handler(req, ctx) {
+      const r = associate(ctx, String(req.body?.id ?? ""), String(req.body?.sessionId ?? ""), true)
+      return { body: r, status: r.ok ? 200 : 400 }
+    },
+  },
+  {
+    method: "POST",
+    path: "/dissociate",
+    async handler(req, ctx) {
+      const r = associate(ctx, String(req.body?.id ?? ""), String(req.body?.sessionId ?? ""), false)
+      return { body: r, status: r.ok ? 200 : 400 }
     },
   },
 ]
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
 // Capability
-// ─────────────────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
 
 export const taskflowCapability: Capability = {
   id: "taskflow",
   title: "任务看板",
   icon: "list-checks",
-  description: "文档驱动的项目任务编排：扫描 Obsidian vault 的任务文档，按 status 状态机派发澄清/执行/PHA 同步 session。",
+  description: "看板中心的任务-会话关联台：解析 Obsidian Kanban 看板，连接任务⇄session⇄PHA，标准化文档，从任务一键启动/继续会话。",
   hasPanel: true,
-  events: ["taskflow:changed"],
+  events: ["taskflow:focus", "taskflow:changed"],
   configSchema: {
     fields: [
       {
         key: "vaultDir",
-        label: "项目根目录",
+        label: "扫描根目录",
         type: "string",
-        placeholder: "如 D:\\vault\\01-项目资料",
-        help: "Obsidian vault 里的项目根目录；每个子目录=一个项目，任务在 <项目>/tasks/*.md",
-      },
-      { key: "pollSeconds", label: "扫描间隔(秒)", type: "number", default: 10, help: "0=停用扫描" },
-      {
-        key: "autoClarify",
-        label: "新任务自动澄清",
-        type: "boolean",
-        default: true,
-        help: "inbox 任务自动起澄清 session（消耗一次 LLM 调用）",
+        placeholder: "如 D:\\vault 或 D:\\vault\\01-项目资料",
+        help: "taskflow 会在此目录下递归查找 Obsidian Kanban 看板（含 kanban-plugin: board 的文件）；看板上 [[链接]] 到的文档即任务，放哪都行。",
       },
       {
-        key: "autoStart",
-        label: "就绪自动启动",
-        type: "boolean",
-        default: false,
-        help: "ready 任务自动起执行 session（建议先手动启动建立信任）",
+        key: "newTaskDir",
+        label: "新任务落点",
+        type: "string",
+        placeholder: "留空=扫描根目录/收件箱",
+        help: "task_create 新建任务文档的目录；你之后可随意移动（看板链接不受影响）。",
       },
-      { key: "maxConcurrent", label: "并发任务上限", type: "number", default: 2 },
+      {
+        key: "doneColumns",
+        label: "完成列名",
+        type: "string",
+        default: "已完成,Done,完成",
+        help: "逗号分隔；卡片移到这些列时自动打勾，面板里归为已完成。",
+      },
+      { key: "pollSeconds", label: "刷新间隔(秒)", type: "number", default: 15, help: "刷新看板/任务缓存的间隔（供焦点联动与面板）。0=不主动刷新。" },
       { key: "sessionModel", label: "会话模型(可选)", type: "string", placeholder: "provider/model，留空用默认" },
     ],
   },
@@ -862,22 +906,21 @@ export const taskflowCapability: Capability = {
   routes,
 
   init(ctx) {
-    ensureState(ctx)
     pollStop = false
     if (pollTimer) clearTimeout(pollTimer)
-    // mailflow 同款 self-rescheduling tick：live 读配置、慢扫描不叠加。
     const tick = () => {
       if (pollStop) return
-      const seconds = cfg(ctx).pollSeconds
-      if (!Number.isFinite(seconds) || seconds <= 0 || !cfg(ctx).vaultDir) {
+      const conf = cfg(ctx)
+      if (conf.pollSeconds <= 0 || !conf.vaultDir) {
         pollTimer = setTimeout(tick, 30_000)
         return
       }
-      void scan(ctx)
-        .catch((e) => ctx.log("scan failed", e))
-        .finally(() => {
-          if (!pollStop) pollTimer = setTimeout(tick, Math.max(5, seconds) * 1000)
-        })
+      try {
+        refreshRegistry(ctx)
+      } catch (e) {
+        ctx.log("registry refresh failed", e)
+      }
+      pollTimer = setTimeout(tick, Math.max(5, conf.pollSeconds) * 1000)
     }
     pollTimer = setTimeout(tick, 3_000)
   },

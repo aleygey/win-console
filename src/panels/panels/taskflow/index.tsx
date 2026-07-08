@@ -1,43 +1,34 @@
 /**
- * taskflow panel — 任务看板（文档驱动的项目任务编排前端）。
+ * taskflow panel — 任务·会话 关联台。
  *
- * 数据全部来自 daemon 的 taskflow capability（GET /cap/taskflow/tasks，轮询
- * 5s，文档才是事实源——本面板只是视图 + 少量动作按钮）。列 = 状态机各态；
- * 卡片上的 session 徽章跳转会话监控（#panel=sessions&session=<id>），
- * 「打开」用 obsidian:// 协议直达任务文档。
+ * 看板视图在 Obsidian（官方 Kanban 插件）里，本面板不重复画看板，专注三件事：
+ *   1) 左栏「最近会话」（复用会话监控数据），可拖拽；
+ *   2) 右栏任务按看板列分组，每行是拖放目标——把会话拖到任务行 = 关联；
+ *   3) 每个任务一键「启动/继续」session、点 session 徽章跳回会话续聊。
+ *
+ * 数据来自 GET /cap/taskflow/tasks（轮询 5s）+ api.chat.monitor（最近会话）。
+ * 关联写进任务 frontmatter.sessions[]（daemon /associate）。
  */
 import { createMemo, createSignal, For, Show, onCleanup, onMount, type JSX } from "solid-js"
 import { registerPanel } from "../../registry"
 import { api } from "../../bridge"
 import { Icon } from "../../icons"
+import type { ChatMonitorEntry } from "../../../contracts"
 import "./taskflow.css"
-
-type TaskStatus = "inbox" | "clarifying" | "ready" | "doing" | "review" | "done" | "synced" | "blocked"
 
 type Task = {
   id: string
   title: string
   project: string
   type: string
-  status: TaskStatus
-  priority: string
+  status: string
+  board: string
   sessions: string[]
   pha_issue: string
+  todos: { done: number; total: number }
   path: string
   mtimeMs: number
-  updated: string
 }
-
-const COLUMNS: Array<{ status: TaskStatus; label: string; tone?: "warn" | "good" | "info" }> = [
-  { status: "inbox", label: "新建" },
-  { status: "clarifying", label: "澄清中", tone: "warn" },
-  { status: "ready", label: "就绪", tone: "warn" },
-  { status: "doing", label: "进行中", tone: "info" },
-  { status: "review", label: "待验收", tone: "warn" },
-  { status: "blocked", label: "阻塞", tone: "warn" },
-  { status: "done", label: "已完成", tone: "good" },
-  { status: "synced", label: "已同步", tone: "good" },
-]
 
 function timeAgo(ms: number): string {
   if (!ms) return "—"
@@ -50,26 +41,45 @@ function timeAgo(ms: number): string {
   return `${Math.floor(h / 24)}天前`
 }
 
+const DRAG_MIME = "application/x-taskflow-session"
+
 function TaskflowPanel(): JSX.Element {
   const [tasks, setTasks] = createSignal<Task[]>([])
+  const [sessions, setSessions] = createSignal<ChatMonitorEntry[]>([])
+  const [boards, setBoards] = createSignal<Array<{ path: string; columns: string[] }>>([])
+  const [doneColumns, setDoneColumns] = createSignal<string[]>([])
   const [err, setErr] = createSignal<string | undefined>()
   const [loaded, setLoaded] = createSignal(false)
-  const [project, setProject] = createSignal<string>("")
+  const [project, setProject] = createSignal("")
+  const [dropId, setDropId] = createSignal<string | undefined>() // task row hovered while dragging
   const [busyId, setBusyId] = createSignal<string | undefined>()
 
   let stopped = false
   let timer: ReturnType<typeof setTimeout> | undefined
+  async function refreshTasks(): Promise<void> {
+    try {
+      const r = await api.read<{ ok: boolean; tasks: Task[]; boards: any[]; doneColumns: string[]; error?: string }>(
+        "taskflow",
+        "/tasks",
+      )
+      setTasks(r.tasks ?? [])
+      setBoards(r.boards ?? [])
+      setDoneColumns(r.doneColumns ?? [])
+      setErr(r.ok ? undefined : (r.error ?? "未知错误"))
+    } catch (e) {
+      setErr(String((e as Error)?.message ?? e))
+    } finally {
+      setLoaded(true)
+    }
+  }
   async function tick(): Promise<void> {
     if (stopped) return
     if (!document.hidden || !loaded()) {
+      await refreshTasks()
       try {
-        const r = await api.read<{ ok: boolean; tasks: Task[]; error?: string }>("taskflow", "/tasks")
-        setTasks(r.tasks ?? [])
-        setErr(r.ok ? undefined : (r.error ?? "未知错误"))
-      } catch (e) {
-        setErr(String((e as Error)?.message ?? e))
-      } finally {
-        setLoaded(true)
+        setSessions(await api.chat.monitor(24))
+      } catch {
+        /* opencode down — left column just empty */
       }
     }
     timer = setTimeout(() => void tick(), 5000)
@@ -82,18 +92,41 @@ function TaskflowPanel(): JSX.Element {
 
   const projects = createMemo(() => [...new Set(tasks().map((t) => t.project))].sort())
   const filtered = createMemo(() => (project() ? tasks().filter((t) => t.project === project()) : tasks()))
-  const byStatus = (s: TaskStatus) =>
-    filtered()
-      .filter((t) => t.status === s)
-      .sort((a, b) => b.mtimeMs - a.mtimeMs)
 
-  async function action(path: string, body: Record<string, unknown>, id: string): Promise<void> {
-    if (busyId()) return
-    setBusyId(id)
+  // Column order per the discovered boards (falls back to observed statuses).
+  const columns = createMemo(() => {
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const b of boards()) for (const c of b.columns) if (!seen.has(c)) (seen.add(c), out.push(c))
+    for (const t of filtered()) if (!seen.has(t.status)) (seen.add(t.status), out.push(t.status))
+    return out
+  })
+  const tasksInColumn = (col: string) => filtered().filter((t) => t.status === col).sort((a, b) => b.mtimeMs - a.mtimeMs)
+
+  async function associate(taskId: string, sessionId: string): Promise<void> {
     try {
-      await api.call("taskflow", path, body)
-      const r = await api.read<{ ok: boolean; tasks: Task[] }>("taskflow", "/tasks")
-      setTasks(r.tasks ?? [])
+      await api.call("taskflow", "/associate", { id: taskId, sessionId })
+      await refreshTasks()
+    } catch (e) {
+      setErr(String((e as Error)?.message ?? e))
+    }
+  }
+  async function dissociate(taskId: string, sessionId: string): Promise<void> {
+    try {
+      await api.call("taskflow", "/dissociate", { id: taskId, sessionId })
+      await refreshTasks()
+    } catch (e) {
+      setErr(String((e as Error)?.message ?? e))
+    }
+  }
+  async function launch(taskId: string, mode: "continue" | "new"): Promise<void> {
+    if (busyId()) return
+    setBusyId(taskId)
+    try {
+      const r = await api.call<{ ok: boolean; sessionId?: string; error?: string }>("taskflow", "/launch", { id: taskId, mode })
+      await refreshTasks()
+      if (r.ok && r.sessionId) location.hash = `#panel=sessions&session=${r.sessionId}`
+      else if (!r.ok) setErr(r.error ?? "启动失败")
     } catch (e) {
       setErr(String((e as Error)?.message ?? e))
     } finally {
@@ -104,6 +137,8 @@ function TaskflowPanel(): JSX.Element {
   const openSession = (sid: string) => {
     location.hash = `#panel=sessions&session=${sid}`
   }
+  const statusOf = (e: ChatMonitorEntry) =>
+    e.ask ? "待处理" : e.busy ? "运行中" : e.state === "retry" ? "重试中" : "空闲"
 
   return (
     <section class="tf-panel">
@@ -113,13 +148,9 @@ function TaskflowPanel(): JSX.Element {
           <option value="">全部项目</option>
           <For each={projects()}>{(p) => <option value={p}>{p}</option>}</For>
         </select>
+        <span class="tf-hint">看板本体在 Obsidian（Kanban 插件）里；这里做任务↔会话关联与启动</span>
         <span class="tf-spacer" />
-        <button
-          type="button"
-          class="tf-btn"
-          onClick={() => void api.call("taskflow", "/scan", {}).catch(() => {})}
-          title="立即扫描 vault（平时每 10s 自动扫）"
-        >
+        <button type="button" class="tf-btn" onClick={() => void api.call("taskflow", "/scan", {}).then(refreshTasks)}>
           <Icon name="refresh-cw" size={13} />
           扫描
         </button>
@@ -128,133 +159,175 @@ function TaskflowPanel(): JSX.Element {
       <Show when={err()}>
         <div class="tf-err">
           {err()}
-          <span class="tf-err-hint">
-            —— 需要 win-host ≥ 0.1.10，并在「管理 → 任务看板」配置项目根目录（vault 的 01-项目资料）
-          </span>
+          <span class="tf-err-hint"> —— 在「管理 → 任务看板」配置扫描根目录（含 Obsidian Kanban 看板的 vault 目录）</span>
         </div>
       </Show>
 
       <Show when={loaded() && !err() && tasks().length === 0}>
         <div class="tf-empty">
-          <p>还没有任务。在 vault 的 <code>01-项目资料/&lt;项目&gt;/tasks/</code> 下新建任务文档即可：</p>
+          <p>还没有识别到任务。taskflow 会扫描配置目录下所有 Obsidian Kanban 看板，看板上 <code>[[链接]]</code> 到的文档即任务。</p>
+          <p>做法：① 用 Kanban 插件建一个项目看板 → ② 新建任务文档（模板见下）→ ③ 把 <code>[[任务名]]</code> 拖到看板列。</p>
           <pre>{`---
-id: T-0001
 project: 机型X
 type: bug修复
-status: inbox
-priority: P1
 sessions: []
 pha_issue: ""
 ---
+# 低温启动 bug
 
-## 目标
-（一句话描述要做什么）
+## 待办
+- [ ] 复现
+- [ ] 修复
 
-## 验收标准
-- [ ] …
+## 进展
+
+## 问题与解决
+
+## 备注
 `}</pre>
-          <p>保存后 taskflow 会自动接管（澄清 → 就绪 → 启动 → 验收 → 同步 PHA）。</p>
         </div>
       </Show>
 
-      <div class="tf-board">
-        <For each={COLUMNS}>
-          {(col) => (
-            <div class="tf-col" data-status={col.status}>
-              <div class="tf-col-hd" data-tone={col.tone}>
-                <span class="tf-col-title">{col.label}</span>
-                <span class="tf-col-n">{byStatus(col.status).length}</span>
-              </div>
-              <div class="tf-col-bd">
-                <For each={byStatus(col.status)}>
-                  {(t) => (
-                    <div class="tf-card">
-                      <div class="tf-card-head">
-                        <span class="tf-id">{t.id}</span>
-                        <Show when={t.priority}>
-                          <span class="tf-pri" data-p={t.priority}>
-                            {t.priority}
-                          </span>
-                        </Show>
-                        <span class="tf-spacer" />
-                        <span class="tf-time">{timeAgo(t.mtimeMs)}</span>
+      <div class="tf-body">
+        {/* 左：最近会话，可拖 */}
+        <aside class="tf-sessions">
+          <div class="tf-sessions-hd">最近会话 · 拖到右侧任务关联</div>
+          <div class="tf-sessions-list">
+            <Show when={sessions().length > 0} fallback={<div class="tf-sess-empty">暂无会话</div>}>
+              <For each={sessions()}>
+                {(s) => (
+                  <div
+                    class="tf-sess-card"
+                    draggable={true}
+                    onDragStart={(ev) => ev.dataTransfer?.setData(DRAG_MIME, s.id)}
+                  >
+                    <div class="tf-sess-top">
+                      <span class="tf-sess-state" data-busy={s.busy}>
+                        {statusOf(s)}
+                      </span>
+                      <span class="tf-spacer" />
+                      <span class="tf-sess-time">{timeAgo(s.updatedAt)}</span>
+                    </div>
+                    <div class="tf-sess-title" title={s.title}>
+                      {s.title}
+                    </div>
+                    <Show when={s.task}>
+                      <div class="tf-sess-task" title={s.task}>
+                        {s.task}
                       </div>
-                      <div class="tf-card-title" title={t.path}>
-                        {t.title}
-                      </div>
-                      <div class="tf-card-tags">
-                        <span class="tf-tag">{t.project}</span>
-                        <span class="tf-tag">{t.type}</span>
-                      </div>
-                      <Show when={t.sessions.length > 0 || t.pha_issue}>
-                        <div class="tf-card-links">
-                          <For each={t.sessions.slice(-3)}>
-                            {(sid) => (
-                              <button
-                                type="button"
-                                class="tf-sess"
-                                title={`打开会话 ${sid}`}
-                                onClick={() => openSession(sid)}
-                              >
-                                <Icon name="message-square" size={11} />…{sid.slice(-6)}
-                              </button>
-                            )}
-                          </For>
-                          <Show when={t.pha_issue}>
-                            <a class="tf-pha" href={t.pha_issue} target="_blank" rel="noopener">
-                              PHA
-                            </a>
+                    </Show>
+                    <button class="tf-sess-open" onClick={() => openSession(s.id)}>
+                      打开会话 ↗
+                    </button>
+                  </div>
+                )}
+              </For>
+            </Show>
+          </div>
+        </aside>
+
+        {/* 右：任务按看板列分组，行是拖放目标 */}
+        <div class="tf-columns">
+          <For each={columns()}>
+            {(col) => (
+              <Show when={tasksInColumn(col).length > 0}>
+                <div class="tf-colgroup">
+                  <div class="tf-colgroup-hd" data-done={doneColumns().includes(col.toLowerCase())}>
+                    {col}
+                    <span class="tf-colgroup-n">{tasksInColumn(col).length}</span>
+                  </div>
+                  <For each={tasksInColumn(col)}>
+                    {(t) => (
+                      <div
+                        class="tf-task"
+                        data-drop={dropId() === t.id}
+                        onDragOver={(ev) => {
+                          if (ev.dataTransfer?.types.includes(DRAG_MIME)) {
+                            ev.preventDefault()
+                            setDropId(t.id)
+                          }
+                        }}
+                        onDragLeave={() => dropId() === t.id && setDropId(undefined)}
+                        onDrop={(ev) => {
+                          ev.preventDefault()
+                          const sid = ev.dataTransfer?.getData(DRAG_MIME)
+                          setDropId(undefined)
+                          if (sid) void associate(t.id, sid)
+                        }}
+                      >
+                        <div class="tf-task-main">
+                          <div class="tf-task-title" title={t.path}>
+                            {t.title}
+                          </div>
+                          <div class="tf-task-meta">
+                            <Show when={t.type}>
+                              <span class="tf-tag">{t.type}</span>
+                            </Show>
+                            <Show when={t.todos.total > 0}>
+                              <span class="tf-todos" title="待办完成度">
+                                {t.todos.done}/{t.todos.total}
+                              </span>
+                            </Show>
+                            <Show when={t.pha_issue}>
+                              <a class="tf-pha" href={t.pha_issue} target="_blank" rel="noopener">
+                                PHA
+                              </a>
+                            </Show>
+                          </div>
+                          <Show when={t.sessions.length > 0}>
+                            <div class="tf-task-sessions">
+                              <For each={t.sessions}>
+                                {(sid) => (
+                                  <span class="tf-badge">
+                                    <button class="tf-badge-open" title="打开会话续聊" onClick={() => openSession(sid)}>
+                                      <Icon name="message-square" size={10} />…{sid.slice(-6)}
+                                    </button>
+                                    <button class="tf-badge-x" title="取消关联" onClick={() => void dissociate(t.id, sid)}>
+                                      ×
+                                    </button>
+                                  </span>
+                                )}
+                              </For>
+                            </div>
                           </Show>
                         </div>
-                      </Show>
-                      <div class="tf-card-actions">
-                        <Show when={t.status === "ready" || t.status === "blocked" || t.status === "inbox"}>
+                        <div class="tf-task-actions">
                           <button
                             type="button"
                             class="tf-btn tf-btn-primary"
                             disabled={busyId() === t.id}
-                            onClick={() => void action("/task/start", { id: t.id }, t.id)}
+                            title={t.sessions.length ? "继续最近的关联会话" : "新建会话开始任务"}
+                            onClick={() => void launch(t.id, "continue")}
                           >
-                            {busyId() === t.id ? "启动中…" : "启动"}
+                            {busyId() === t.id ? "…" : t.sessions.length ? "继续" : "启动"}
                           </button>
-                        </Show>
-                        <Show when={t.status === "review"}>
-                          <button
-                            type="button"
-                            class="tf-btn tf-btn-primary"
-                            disabled={busyId() === t.id}
-                            onClick={() => void action("/task/set-status", { id: t.id, status: "done" }, t.id)}
+                          <Show when={t.sessions.length > 0}>
+                            <button
+                              type="button"
+                              class="tf-btn"
+                              disabled={busyId() === t.id}
+                              title="另开一个新会话"
+                              onClick={() => void launch(t.id, "new")}
+                            >
+                              新会话
+                            </button>
+                          </Show>
+                          <a
+                            class="tf-open"
+                            href={`obsidian://open?path=${encodeURIComponent(t.path)}`}
+                            title="在 Obsidian 打开任务文档"
                           >
-                            验收通过
-                          </button>
-                        </Show>
-                        <Show when={t.status === "done"}>
-                          <button
-                            type="button"
-                            class="tf-btn"
-                            disabled={busyId() === t.id}
-                            onClick={() => void action("/task/sync-pha", { id: t.id }, t.id)}
-                          >
-                            同步PHA
-                          </button>
-                        </Show>
-                        <span class="tf-spacer" />
-                        <a
-                          class="tf-open"
-                          href={`obsidian://open?path=${encodeURIComponent(t.path)}`}
-                          title="在 Obsidian 中打开任务文档"
-                        >
-                          <Icon name="file-text" size={12} />
-                          打开
-                        </a>
+                            <Icon name="file-text" size={12} />
+                          </a>
+                        </div>
                       </div>
-                    </div>
-                  )}
-                </For>
-              </div>
-            </div>
-          )}
-        </For>
+                    )}
+                  </For>
+                </div>
+              </Show>
+            )}
+          </For>
+        </div>
       </div>
     </section>
   )

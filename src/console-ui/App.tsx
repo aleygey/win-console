@@ -144,6 +144,12 @@ export default function App(props: { expClient?: ExpClient }): JSX.Element {
       if (e.type === "capabilities:changed" || e.type === "config:changed") {
         void loadCaps()
         void api.getConfig().then(setCfg).catch(() => {})
+      } else if (e.type === "taskflow:focus") {
+        // 可选：Obsidian 切到任务文档时自动跳到会话面板（sessions 面板里的开关）。
+        const p = e.payload as { found?: boolean } | undefined
+        if (p?.found && localStorage.getItem("winhost-taskflow-autoswitch") === "1" && activeId() !== "sessions") {
+          if (panels().some((x) => x.id === "sessions")) setActiveId("sessions")
+        }
       }
     })
     onCleanup(off)

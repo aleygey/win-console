@@ -104,7 +104,9 @@ export function serializeFrontmatter(fm: Frontmatter, body: string): string {
 // the format-enforcing tools below; humans own 备注.
 // ═════════════════════════════════════════════════════════════════════════════
 
-const SECTIONS = ["待办", "进展", "问题与解决", "备注"] as const
+// 文档三段式：头部 frontmatter（tag/pha/sessions）→ 概览（待办/问题与解决，
+// 反映整体状态）→「记录」（线性分章节的详细过程，1 / 1.1 / 1.1.1）。备注归人。
+const SECTIONS = ["待办", "问题与解决", "记录", "备注"] as const
 
 /** Return [start,end) line indices of the `## <heading>` block body (exclusive
  *  of the heading line), or null if the heading is absent. */
@@ -177,6 +179,78 @@ function editTodo(body: string, action: "check" | "uncheck" | "add", text: strin
     }
   }
   return withSecs // no match — leave as-is (caller reports)
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 「记录」章节写入 — 线性分章节的任务过程记录（1 / 1.2 / 1.2.3）。
+// 结构（编号+标题+层级）由工具控制，内容是 agent 的自由 Markdown（表格等均可）。
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** "1.2.3" → [1,2,3]；非法/超过 3 级 → null。 */
+export function parseSecNum(s: string): number[] | null {
+  if (!/^\d+(\.\d+){0,2}$/.test(s.trim())) return null
+  return s.trim().split(".").map(Number)
+}
+
+function cmpSecNum(a: number[], b: number[]): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i] ?? -1
+    const y = b[i] ?? -1
+    if (x !== y) return x - y
+  }
+  return 0
+}
+
+/** 在「记录」区写入/替换一个编号章节。
+ *  - 已存在同号章节 → 替换其标题与正文（保留其子章节——只替换到下一个编号标题为止）；
+ *  - 不存在 → 按编号顺序插入正确位置；
+ *  - 标题深度：1→###、1.1→####、1.1.1→#####。 */
+export function writeRecordSection(body: string, section: string, title: string, content: string): string | null {
+  const num = parseSecNum(section)
+  if (!num) return null
+  const withSecs = ensureSections(body)
+  const lines = withSecs.split(/\r?\n/)
+  const r = sectionRange(lines, "记录")!
+  const headingRe = /^(#{3,5})\s+(\d+(?:\.\d+){0,2})\s+(.*)$/
+
+  type Found = { line: number; num: number[] }
+  const heads: Found[] = []
+  for (let i = r.start; i < r.end; i++) {
+    const m = headingRe.exec(lines[i])
+    if (m) {
+      const n = parseSecNum(m[2])
+      if (n) heads.push({ line: i, num: n })
+    }
+  }
+
+  const newHeading = `${"#".repeat(2 + num.length)} ${section} ${title.trim()}`
+  const newBlock = [newHeading, "", content.replace(/\s+$/, ""), ""]
+
+  const existing = heads.find((h) => cmpSecNum(h.num, num) === 0)
+  if (existing) {
+    // 替换：从该标题到下一个编号标题（任意层级）之前 —— 子章节是后续标题，天然保留
+    const idx = heads.indexOf(existing)
+    const end = idx + 1 < heads.length ? heads[idx + 1].line : r.end
+    return [...lines.slice(0, existing.line), ...newBlock, ...lines.slice(end)].join("\n")
+  }
+  // 插入：第一个编号大于目标的标题之前；否则「记录」区末尾
+  const after = heads.find((h) => cmpSecNum(h.num, num) > 0)
+  let at = after ? after.line : r.end
+  while (at > r.start && lines[at - 1].trim() === "" && !after) at-- // 末尾插入前收掉多余空行
+  return [...lines.slice(0, at), ...newBlock, ...lines.slice(at)].join("\n")
+}
+
+/** 列出「记录」区现有章节（给 task_list/契约用，agent 据此知道下一个编号）。 */
+export function listRecordSections(body: string): Array<{ num: string; title: string }> {
+  const lines = body.split(/\r?\n/)
+  const r = sectionRange(lines, "记录")
+  if (!r) return []
+  const out: Array<{ num: string; title: string }> = []
+  for (let i = r.start; i < r.end; i++) {
+    const m = /^#{3,5}\s+(\d+(?:\.\d+){0,2})\s+(.*)$/.exec(lines[i])
+    if (m) out.push({ num: m[1], title: m[2].trim() })
+  }
+  return out
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -265,8 +339,8 @@ export function moveCard(raw: string, taskBase: string, toColumn: string, checke
   return [...without.slice(0, end), card, ...without.slice(end)].join("\n")
 }
 
-/** Add a `- [ ] [[base]]` card under a column (default first column) of a board. */
-function addCard(raw: string, taskBase: string, column?: string): string {
+/** Add a `- [ ] [[base]]<suffix>` card under a column (default first) of a board. */
+function addCard(raw: string, taskBase: string, column?: string, suffix = ""): string {
   const lines = raw.split(/\r?\n/)
   let headIdx = -1
   for (let i = 0; i < lines.length; i++) {
@@ -280,7 +354,7 @@ function addCard(raw: string, taskBase: string, column?: string): string {
   }
   if (headIdx < 0) {
     // no columns yet — create the default one
-    return lines.join("\n").replace(/\s*$/, "") + `\n\n## ${column ?? "待办"}\n\n- [ ] [[${taskBase}]]\n`
+    return lines.join("\n").replace(/\s*$/, "") + `\n\n## ${column ?? "待办"}\n\n- [ ] [[${taskBase}]]${suffix}\n`
   }
   let end = lines.length
   for (let i = headIdx + 1; i < lines.length; i++) {
@@ -290,7 +364,7 @@ function addCard(raw: string, taskBase: string, column?: string): string {
     }
   }
   while (end > headIdx + 1 && lines[end - 1].trim() === "") end--
-  return [...lines.slice(0, end), `- [ ] [[${taskBase}]]`, ...lines.slice(end)].join("\n")
+  return [...lines.slice(0, end), `- [ ] [[${taskBase}]]${suffix}`, ...lines.slice(end)].join("\n")
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -299,6 +373,39 @@ function addCard(raw: string, taskBase: string, column?: string): string {
 // ═════════════════════════════════════════════════════════════════════════════
 
 const norm = (p: string): string => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
+
+/** Windows 路径 → WSL 视角（C:\a\b → /mnt/c/a/b）。opencode 跑在 WSL 里，
+ *  agent 直接读写文件时要用这个形态；win-host 自己始终用 Windows 路径。 */
+export function winToWsl(p: string): string {
+  const m = /^([A-Za-z]):[\\/](.*)$/.exec(p)
+  if (!m) return p.replace(/\\/g, "/")
+  return `/mnt/${m[1].toLowerCase()}/${m[2].replace(/\\/g, "/")}`
+}
+
+// ── 看板卡片徽章 —— 卡片尾部维护 ` · n/N` 待办完成度（状态即列，无需重复）──
+
+const BADGE_RE = /\s*·\s*\d+\/\d+\s*$/
+
+/** 对一份看板，把每张可解析卡片的待办徽章刷成最新；无变化返回 null。 */
+export function applyCardBadges(raw: string, statsByLink: Map<string, { done: number; total: number }>): string | null {
+  const lines = raw.split(/\r?\n/)
+  let changed = false
+  for (let i = 0; i < lines.length; i++) {
+    if (/^%%/.test(lines[i])) break
+    if (!/^\s*[-*]\s*\[[ xX]\]/.test(lines[i])) continue
+    const link = cardLink(lines[i])
+    if (!link) continue
+    const st = statsByLink.get(link.toLowerCase())
+    if (!st) continue
+    const base = lines[i].replace(BADGE_RE, "")
+    const next = st.total > 0 ? `${base} · ${st.done}/${st.total}` : base
+    if (next !== lines[i]) {
+      lines[i] = next
+      changed = true
+    }
+  }
+  return changed ? lines.join("\n") : null
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Task model + registry
@@ -410,6 +517,27 @@ function buildRegistry(vaultDir: string): Registry {
       }
     }
   }
+  // 卡片徽章同步：把每张卡尾部的 ` · n/N` 刷成任务当前待办完成度（仅变化时写盘，
+  // 稳态零写入；看板正被 Obsidian 编辑时写失败静默跳过，下轮补上）。
+  for (const b of boards) {
+    const stats = new Map<string, { done: number; total: number }>()
+    for (const col of b.columns) {
+      for (const card of col.cards) {
+        const np = byId.get(card.link.toLowerCase())
+        const t = np ? tasks.get(np) : undefined
+        if (t) stats.set(card.link.toLowerCase(), t.todos)
+      }
+    }
+    const next = applyCardBadges(b.raw, stats)
+    if (next) {
+      try {
+        writeFileSync(b.path, next, "utf8")
+      } catch {
+        /* board busy — next refresh */
+      }
+    }
+  }
+
   return {
     tasks,
     byId,
@@ -511,27 +639,58 @@ function taskTemplate(input: { title: string; project: string; type: string; tod
     created: input.date,
   }
   const todos = (input.todos.length ? input.todos : ["（待补充）"]).map((t) => `- [ ] ${t}`).join("\n")
-  const body = [`# ${input.title}`, "", "## 待办", todos, "", "## 进展", "", "## 问题与解决", "", "## 备注", ""].join("\n")
+  const body = [`# ${input.title}`, "", "## 待办", todos, "", "## 问题与解决", "", "## 记录", "", "## 备注", ""].join("\n")
   return serializeFrontmatter(fm, body)
 }
 
 function launchContract(meta: TaskMeta, sessionId: string, docText: string): string {
+  const recs = listRecordSections(docText.split(/\r?\n---\r?\n/).slice(-1)[0] ?? docText)
+  const nextNum = recs.length ? String(Math.max(...recs.map((r) => Number(r.num.split(".")[0]))) + 1) : "1"
   return [
     `【taskflow】你在处理任务「${meta.title}」（id: ${meta.id}，项目 ${meta.project}）。你本次的 session id 是 ${sessionId}。`,
+    `任务文档路径：Windows「${meta.path}」；WSL/Linux 环境用「${winToWsl(meta.path)}」。`,
+    "",
+    "文档结构（三段式）：frontmatter（tag/pha/sessions）→ 概览（待办 / 问题与解决）→",
+    "「记录」（线性分章节的详细过程，编号 1 / 1.1 / 1.1.1）。「备注」属于用户，禁止改写。",
     "",
     "可用工具（win-host MCP）——只能通过它们写文档，保证格式统一：",
+    `- task_write_section(id="${meta.id}", section, title, content, complete_todo?)：`,
+    "  【主力】向「记录」写一个编号章节：content 是自由 Markdown（表格/代码块均可）；",
+    "  同号章节会被更新；传 complete_todo 可同时勾掉对应待办，实现文档与概览同步。",
+    `  当前已有章节：${recs.length ? recs.map((r) => r.num).join(", ") : "（无）"}；新阶段从 ${nextNum} 开始，子步骤用 ${nextNum}.1、${nextNum}.2…`,
     `- task_todo(id="${meta.id}", action, text)：勾选/新增待办（action: check/uncheck/add）`,
-    `- task_log(id="${meta.id}", text, session="${sessionId}")：向「进展」追加一行`,
     `- task_issue(id="${meta.id}", problem, solution)：向「问题与解决」追加一条`,
+    `- task_log(id="${meta.id}", text, session="${sessionId}")：只记一句话时用（追加到「记录」末尾）`,
     `- task_set_status(id="${meta.id}", column)：移动看板卡片（列见看板）`,
-    `- task_get(id="${meta.id}")：读文档全文`,
-    "（若这些工具不在你的工具列表里，就直接编辑任务文档的同名小节，格式保持一致。）",
+    `- task_set_field(id="${meta.id}", key, value)：更新 type/pha_issue 字段`,
+    `- task_get(id="${meta.id}")：读文档全文；task_list()：看板全览`,
+    "（若这些工具不在你的工具列表里，就按上面的结构直接编辑任务文档，路径用 WSL 形态。）",
     "",
     "规则：",
-    "1. 只做「待办」里列出的事；完成一项 → task_todo check 勾掉它 + task_log 记一行进展。",
-    "2. 遇到问题与解决办法 → task_issue 记录（problem/solution 两段）。",
-    "3. 不要改写「备注」以及其它用户区域；不要动 PHA（同步由用户手动触发）。",
-    "4. 阶段性完成后在「进展」写一句小结。",
+    "1. 只做「待办」里列出的事。",
+    "2. 每完成一个阶段 → task_write_section 写一个编号章节（做了什么/怎么做的/结果，",
+    "   数据用表格），并用 complete_todo 勾掉对应待办——不要只丢一句话。",
+    "3. 遇到问题与解决办法 → task_issue 记录。",
+    "4. 不要改写「备注」；不要主动碰 PHA（同步由用户手动触发）。",
+    "",
+    "## 当前任务文档",
+    "```markdown",
+    docText,
+    "```",
+  ].join("\n")
+}
+
+/** PHA 手动同步指令 —— 概览为主，不必全文。 */
+function phaSyncPrompt(meta: TaskMeta, docText: string): string {
+  return [
+    `【taskflow · 同步 PHA】把任务「${meta.title}」的进度同步到内网 PHA。`,
+    "",
+    "步骤：",
+    `1. 若 frontmatter 的 pha_issue 为空 → 用你的 PHA 工具新建条目，然后 task_set_field(id="${meta.id}", key="pha_issue", value=<链接>) 回填。`,
+    "2. 已有 pha_issue → 更新该条目。",
+    "3. 同步内容以**概览为主，不必全文**：任务标题、当前看板状态、待办完成度（n/N + 各项勾选情况）、",
+    "   「问题与解决」条目、以及「记录」里最新一两个章节的小结。",
+    "4. 完成后用一句话回复同步结果（不要改动任务文档其它内容）。",
     "",
     "## 当前任务文档",
     "```markdown",
@@ -548,6 +707,7 @@ async function launch(
   ctx: HostContext,
   idOrPath: string,
   mode: "continue" | "new",
+  kind: "work" | "pha" = "work",
 ): Promise<{ ok: boolean; sessionId?: string; error?: string }> {
   const t = resolveTask(ctx, idOrPath)
   if (!t) return { ok: false, error: `task_not_found: ${idOrPath}` }
@@ -572,8 +732,9 @@ async function launch(
   }
 
   const doc = readFileSync(t.meta.path, "utf8")
+  const text = kind === "pha" ? phaSyncPrompt(t.meta, doc) : launchContract(t.meta, sessionId, doc)
   void ctx.native.chat
-    .send({ text: launchContract(t.meta, sessionId, doc), sessionId, model: conf.sessionModel, directory: projectDir })
+    .send({ text, sessionId, model: conf.sessionModel, directory: projectDir })
     .catch((e) => ctx.log(`launch send failed (${t.meta.id})`, e))
   return { ok: true, sessionId }
 }
@@ -596,69 +757,123 @@ function associate(ctx: HostContext, idOrPath: string, sessionId: string, add: b
 
 const tools: McpToolDef[] = [
   {
+    name: "task_list",
+    description:
+      "看板全览：列出所有看板（路径、列名）和每列下已有的任务（id/标题/类型/待办完成度/文档路径）。" +
+      "创建新任务或查找既有任务前先调用它——确认任务是否已存在、应放哪个看板哪一列。",
+    inputSchema: { type: "object", properties: {} },
+    async handler(_args, ctx) {
+      const conf = cfg(ctx)
+      if (!conf.vaultDir) return { text: "vaultDir 未配置（管理 → 任务看板）", isError: true }
+      refreshRegistry(ctx)
+      const out: string[] = [`扫描根目录: ${conf.vaultDir}（WSL: ${winToWsl(conf.vaultDir)}）`, ""]
+      for (const b of reg.boards) {
+        out.push(`看板: ${b.path}`)
+        for (const col of b.columns) {
+          const inCol = [...reg.tasks.values()].filter((t) => t.board === b.path && t.status === col)
+          out.push(`  列「${col}」(${inCol.length}):`)
+          for (const t of inCol) {
+            out.push(
+              `    - ${t.id}｜${t.title}｜类型:${t.type || "—"}｜待办:${t.todos.done}/${t.todos.total}` +
+                `｜PHA:${t.pha_issue ? "已链" : "无"}｜文档(WSL): ${winToWsl(t.path)}`,
+            )
+          }
+        }
+        out.push("")
+      }
+      if (reg.boards.length === 0) out.push("（没有发现任何 Kanban 看板）")
+      return { text: out.join("\n") }
+    },
+  },
+  {
     name: "task_get",
     description: "读取一个 taskflow 任务文档的全文（id = 文档文件名，如「低温启动bug」）。",
     inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
     async handler(args, ctx) {
       const t = resolveTask(ctx, String(args.id ?? ""))
       if (!t) return { text: `task not found: ${args.id}`, isError: true }
-      return { text: t.raw }
+      return { text: `路径: ${t.meta.path}\n路径(WSL): ${winToWsl(t.meta.path)}\n\n${t.raw}` }
     },
   },
   {
     name: "task_create",
     description:
-      "按统一模板新建一个任务文档，并在其项目看板的第一列插入卡片。用于规划类会话里拆解任务。人日常建任务用 Obsidian 模板即可，不必用此工具。",
+      "按统一模板新建任务文档，并在指定看板列插入卡片（卡片自动带待办完成度徽章）。" +
+      "调用前必须做两件事：① task_list 查看已有任务与看板列，避免重复创建；" +
+      "② dir（文档存放目录）和 column（看板列）如果用户没有明说，先在对话里询问用户确认，不要擅自决定。" +
+      "创建后若任务还没有 PHA：在有 PHA 工具的会话里建一个 PHA 条目并用 task_set_field 回填 pha_issue，或提醒用户稍后处理。",
     inputSchema: {
       type: "object",
       properties: {
-        title: { type: "string", description: "任务标题" },
-        project: { type: "string", description: "所属项目（用于选择看板与归类）" },
+        title: { type: "string", description: "任务标题（也是文件名）" },
+        dir: {
+          type: "string",
+          description: "文档存放目录：绝对 Windows 路径，或相对扫描根目录的相对路径（如「机型X/03-bug修复」）。用户没指定时先询问用户。",
+        },
+        project: { type: "string", description: "所属项目（用于挑看板）" },
+        column: { type: "string", description: "看板列名（即任务类型/状态分组）。不确定先 task_list 看有哪些列、再问用户。" },
+        board: { type: "string", description: "可选，看板文件名或路径；多看板且 project 无法定位时指定" },
         type: { type: "string", description: "任务类型，如 bug修复/硬件适配/产测" },
         todos: { type: "array", items: { type: "string" }, description: "初始待办清单" },
       },
-      required: ["title", "project"],
+      required: ["title", "dir"],
     },
     async handler(args, ctx) {
       const conf = cfg(ctx)
       if (!conf.vaultDir) return { text: "vaultDir 未配置", isError: true }
       const title = String(args.title ?? "").trim()
       if (!title) return { text: "title required", isError: true }
-      const dir = conf.newTaskDir || join(conf.vaultDir, "收件箱")
+      const dirArg = String(args.dir ?? "").trim()
+      if (!dirArg) {
+        return {
+          text: "缺少 dir（文档存放目录）。请先 task_list 查看现有结构，然后在对话里询问用户想把任务文档放在哪个目录、归到看板哪一列，再带上 dir/column 重新调用。",
+          isError: true,
+        }
+      }
+      const dir = /^[A-Za-z]:[\\/]/.test(dirArg) ? dirArg : join(conf.vaultDir, dirArg)
+      if (!norm(dir).startsWith(norm(conf.vaultDir))) {
+        return { text: `目录必须在扫描根目录内: ${conf.vaultDir}`, isError: true }
+      }
       mkdirSync(dir, { recursive: true })
       const safe = title.replace(/[\\/:*?"<>|]/g, "·")
       let file = join(dir, `${safe}.md`)
       let n = 2
       while (existsSync(file)) file = join(dir, `${safe}-${n++}.md`)
-      const date = new Date().toISOString().slice(0, 10)
+      const todos = Array.isArray(args.todos) ? args.todos.map(String) : []
       writeFileSync(
         file,
         taskTemplate({
           title,
           project: String(args.project ?? ""),
           type: String(args.type ?? ""),
-          todos: Array.isArray(args.todos) ? args.todos.map(String) : [],
-          date,
+          todos,
+          date: new Date().toISOString().slice(0, 10),
         }),
         "utf8",
       )
-      // add card to the project's board (first board matching project, else first board)
+      // 挑看板：显式 board 参数 → project 匹配 → 第一个
       refreshRegistry(ctx)
+      const boardArg = String(args.board ?? "").trim().toLowerCase()
       const board =
-        reg.boards.find((b) => boardProjectName(b.path, safeRead(b.path), conf.vaultDir) === String(args.project))?.path ??
+        (boardArg &&
+          reg.boards.find((b) => norm(b.path) === norm(boardArg) || basename(b.path).toLowerCase().startsWith(boardArg))?.path) ||
+        reg.boards.find((b) => boardProjectName(b.path, safeRead(b.path), conf.vaultDir) === String(args.project))?.path ||
         reg.boards[0]?.path
+      const base = basename(file).replace(/\.md$/i, "")
+      let cardNote = "（未找到看板，请手动把 [[链接]] 加到看板）"
       if (board) {
         try {
-          writeFileSync(board, addCard(readFileSync(board, "utf8"), basename(file).replace(/\.md$/i, "")), "utf8")
+          const badge = todos.length ? ` · 0/${todos.length}` : ""
+          writeFileSync(board, addCard(readFileSync(board, "utf8"), base, String(args.column ?? "").trim() || undefined, badge), "utf8")
+          cardNote = `（已加入看板${args.column ? `「${args.column}」列` : "第一列"}）`
         } catch (e) {
           ctx.log("task_create: add card failed", e)
+          cardNote = "（看板写入失败，请手动加卡片）"
         }
       }
       refreshRegistry(ctx)
-      ctx.emit("taskflow:changed", { id: basename(file).replace(/\.md$/i, "") })
-      return {
-        text: `created: ${basename(file)}${board ? "（已加入看板）" : "（未找到看板，请手动把 [[链接]] 加到看板）"}`,
-      }
+      ctx.emit("taskflow:changed", { id: base })
+      return { text: `created: ${file}\nWSL 路径: ${winToWsl(file)}\n${cardNote}` }
     },
   },
   {
@@ -685,8 +900,45 @@ const tools: McpToolDef[] = [
     },
   },
   {
+    name: "task_write_section",
+    description:
+      "【记录文档的主力工具】向任务「记录」区写一个编号章节（线性过程记录）。" +
+      "section 是章节号（1 / 1.2 / 1.2.3，最多三级），同号章节会被更新（子章节保留）；" +
+      "title 是章节标题；content 是自由 Markdown 正文（表格、代码块、列表均可）。" +
+      "传 complete_todo（待办文本的包含匹配）可在写记录的同时勾掉概览区对应待办，保证文档与概览同步。" +
+      "章节结构（编号/层级/顺序）由工具控制，你只管内容。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        section: { type: "string", description: "章节号，如 1、1.2、1.2.3（最多三级）" },
+        title: { type: "string", description: "章节标题" },
+        content: { type: "string", description: "章节正文（Markdown）" },
+        complete_todo: { type: "string", description: "可选：同时勾掉的待办（文本包含匹配）" },
+      },
+      required: ["id", "section", "title", "content"],
+    },
+    async handler(args, ctx) {
+      const t = resolveTask(ctx, String(args.id ?? ""))
+      if (!t) return { text: `task not found: ${args.id}`, isError: true }
+      const next = writeRecordSection(t.body, String(args.section ?? ""), String(args.title ?? ""), String(args.content ?? ""))
+      if (!next) return { text: `非法章节号：${args.section}（应为 1 / 1.2 / 1.2.3，最多三级）`, isError: true }
+      let body = next
+      let todoNote = ""
+      const todo = String(args.complete_todo ?? "").trim()
+      if (todo) {
+        const after = editTodo(body, "check", todo)
+        todoNote = after === body ? `；待办未匹配到「${todo}」` : `；已勾掉待办「${todo}」`
+        body = after
+      }
+      writeTask(t, t.fm, body)
+      ctx.emit("taskflow:changed", { id: t.meta.id })
+      return { text: `ok: 章节 ${args.section} ${args.title} 已写入${todoNote}` }
+    },
+  },
+  {
     name: "task_log",
-    description: "向任务「进展」区追加一行记录（自动带时间戳；session 传你的 session id 以便回溯）。",
+    description: "只记一句话时用：向「记录」区末尾追加一行（自动带时间戳）。成段的过程记录请用 task_write_section。",
     inputSchema: {
       type: "object",
       properties: { id: { type: "string" }, text: { type: "string" }, session: { type: "string" } },
@@ -698,9 +950,32 @@ const tools: McpToolDef[] = [
       const stamp = new Date().toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
       const sess = String(args.session ?? "").trim()
       const line = `- ${stamp}${sess ? ` · ${sess.slice(-6)}` : ""} · ${String(args.text ?? "").trim().replace(/\s+/g, " ")}`
-      writeTask(t, t.fm, appendToSection(t.body, "进展", line))
+      writeTask(t, t.fm, appendToSection(t.body, "记录", line))
       ctx.emit("taskflow:changed", { id: t.meta.id })
-      return { text: "ok: 进展已记录" }
+      return { text: "ok: 已记录" }
+    },
+  },
+  {
+    name: "task_set_field",
+    description: "更新任务 frontmatter 字段。仅允许 type / pha_issue（PHA 链接回填用这个）。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        key: { type: "string", enum: ["type", "pha_issue"] },
+        value: { type: "string" },
+      },
+      required: ["id", "key", "value"],
+    },
+    async handler(args, ctx) {
+      const key = String(args.key ?? "")
+      if (!["type", "pha_issue"].includes(key)) return { text: `field not allowed: ${key}`, isError: true }
+      const t = resolveTask(ctx, String(args.id ?? ""))
+      if (!t) return { text: `task not found: ${args.id}`, isError: true }
+      t.fm[key] = String(args.value ?? "")
+      writeTask(t, t.fm, t.body)
+      ctx.emit("taskflow:changed", { id: t.meta.id })
+      return { text: `ok: ${t.meta.id}.${key} = ${args.value}` }
     },
   },
   {
@@ -843,6 +1118,16 @@ const routes: RouteDef[] = [
       const id = String(req.body?.id ?? req.body?.path ?? "")
       const mode = req.body?.mode === "new" ? "new" : "continue"
       const r = await launch(ctx, id, mode)
+      return { body: r, status: r.ok ? 200 : 400 }
+    },
+  },
+  {
+    // 手动同步 PHA：向任务会话（优先复用最近的）发同步指令，概览为主不全文。
+    method: "POST",
+    path: "/task/sync-pha",
+    async handler(req, ctx) {
+      const id = String(req.body?.id ?? req.body?.path ?? "")
+      const r = await launch(ctx, id, "continue", "pha")
       return { body: r, status: r.ok ? 200 : 400 }
     },
   },

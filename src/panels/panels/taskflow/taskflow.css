@@ -388,6 +388,85 @@
   color: var(--text-on-critical-base);
 }
 
+/* 关联会话的实时迷你卡（合并会话监控卡片内容：状态/待办/时间） */
+.tf-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 8px;
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  cursor: pointer;
+  font-size: 11.5px;
+  color: var(--text-base);
+}
+
+.tf-live:hover {
+  border-color: var(--border-hover);
+  background: var(--surface-base-hover);
+}
+
+.tf-live[data-busy="true"] {
+  border-color: var(--cobalt-6);
+  background: var(--cobalt-3);
+}
+
+.tf-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--border-hover);
+  flex: none;
+}
+
+.tf-live-dot[data-busy="true"] {
+  background: var(--cobalt-9);
+  animation: tf-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes tf-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.tf-live-state {
+  flex: none;
+  color: var(--text-weak);
+}
+
+.tf-live[data-busy="true"] .tf-live-state {
+  color: var(--cobalt-11);
+}
+
+.tf-live-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
+  color: var(--text-strong);
+}
+
+.tf-live-todos {
+  flex: none;
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-weak);
+}
+
+.tf-live-time {
+  flex: none;
+  color: var(--text-weaker);
+  font-size: 10.5px;
+}
+
 .tf-task-actions {
   flex: none;
   display: flex;

@@ -134,6 +134,20 @@ function TaskflowPanel(): JSX.Element {
     }
   }
 
+  async function syncPha(taskId: string): Promise<void> {
+    if (busyId()) return
+    setBusyId(taskId)
+    try {
+      const r = await api.call<{ ok: boolean; sessionId?: string; error?: string }>("taskflow", "/task/sync-pha", { id: taskId })
+      if (r.ok && r.sessionId) location.hash = `#panel=sessions&session=${r.sessionId}`
+      else if (!r.ok) setErr(r.error ?? "同步失败")
+    } catch (e) {
+      setErr(String((e as Error)?.message ?? e))
+    } finally {
+      setBusyId(undefined)
+    }
+  }
+
   const openSession = (sid: string) => {
     location.hash = `#panel=sessions&session=${sid}`
   }
@@ -264,7 +278,7 @@ pha_issue: ""
                               <span class="tf-tag">{t.type}</span>
                             </Show>
                             <Show when={t.todos.total > 0}>
-                              <span class="tf-todos" title="待办完成度">
+                              <span class="tf-todos" title="任务文档的待办完成度">
                                 {t.todos.done}/{t.todos.total}
                               </span>
                             </Show>
@@ -274,19 +288,57 @@ pha_issue: ""
                               </a>
                             </Show>
                           </div>
+                          {/* 关联会话 —— 在监控里的显示实时迷你卡（状态/会话待办/最近一步），
+                              不在监控窗口内的老会话降级为徽章 */}
                           <Show when={t.sessions.length > 0}>
                             <div class="tf-task-sessions">
                               <For each={t.sessions}>
-                                {(sid) => (
-                                  <span class="tf-badge">
-                                    <button class="tf-badge-open" title="打开会话续聊" onClick={() => openSession(sid)}>
-                                      <Icon name="message-square" size={10} />…{sid.slice(-6)}
-                                    </button>
-                                    <button class="tf-badge-x" title="取消关联" onClick={() => void dissociate(t.id, sid)}>
-                                      ×
-                                    </button>
-                                  </span>
-                                )}
+                                {(sid) => {
+                                  const live = () => sessions().find((s) => s.id === sid)
+                                  return (
+                                    <Show
+                                      when={live()}
+                                      fallback={
+                                        <span class="tf-badge">
+                                          <button class="tf-badge-open" title="打开会话续聊" onClick={() => openSession(sid)}>
+                                            <Icon name="message-square" size={10} />…{sid.slice(-6)}
+                                          </button>
+                                          <button class="tf-badge-x" title="取消关联" onClick={() => void dissociate(t.id, sid)}>
+                                            ×
+                                          </button>
+                                        </span>
+                                      }
+                                    >
+                                      {(s) => (
+                                        <div class="tf-live" data-busy={s().busy} onClick={() => openSession(sid)}>
+                                          <span class="tf-live-dot" data-busy={s().busy} aria-hidden="true" />
+                                          <span class="tf-live-state">{statusOf(s())}</span>
+                                          <span class="tf-live-title" title={s().title}>
+                                            {s().title}
+                                          </span>
+                                          <Show when={s().todos}>
+                                            {(td) => (
+                                              <span class="tf-live-todos" title="该会话 agent 自己的待办进度">
+                                                {td().done}/{td().total}
+                                              </span>
+                                            )}
+                                          </Show>
+                                          <span class="tf-live-time">{timeAgo(s().updatedAt)}</span>
+                                          <button
+                                            class="tf-badge-x"
+                                            title="取消关联"
+                                            onClick={(ev) => {
+                                              ev.stopPropagation()
+                                              void dissociate(t.id, sid)
+                                            }}
+                                          >
+                                            ×
+                                          </button>
+                                        </div>
+                                      )}
+                                    </Show>
+                                  )
+                                }}
                               </For>
                             </div>
                           </Show>
@@ -312,6 +364,15 @@ pha_issue: ""
                               新会话
                             </button>
                           </Show>
+                          <button
+                            type="button"
+                            class="tf-btn"
+                            disabled={busyId() === t.id}
+                            title="向任务会话发同步指令：无 PHA 则创建并回填链接，有则更新（概览为主，不全文）"
+                            onClick={() => void syncPha(t.id)}
+                          >
+                            同步PHA
+                          </button>
                           <a
                             class="tf-open"
                             href={`obsidian://open?path=${encodeURIComponent(t.path)}`}

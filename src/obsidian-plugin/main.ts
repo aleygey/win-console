@@ -33,7 +33,18 @@ export default class WinHostPlugin extends Plugin {
     this.addCommand({
       id: "taskflow-launch",
       name: "Taskflow: 启动/继续当前任务",
-      callback: () => void this.launchCurrentTask(),
+      callback: () => void this.launchCurrentTask("continue"),
+    })
+    // 看板卡/焦点条的按钮均已下线——「另开新会话」与「PHA 同步」只保留命令面板入口
+    this.addCommand({
+      id: "taskflow-launch-new",
+      name: "Taskflow: 为当前任务另开新会话",
+      callback: () => void this.launchCurrentTask("new"),
+    })
+    this.addCommand({
+      id: "taskflow-sync-pha",
+      name: "Taskflow: 同步当前任务 PHA",
+      callback: () => void this.syncPhaCurrentTask(),
     })
 
     this.subscribe()
@@ -96,25 +107,47 @@ export default class WinHostPlugin extends Plugin {
     })
   }
 
-  /** Command: launch/continue the opencode session for the currently open task. */
-  private async launchCurrentTask(): Promise<void> {
+  /** 当前活动文件的绝对路径；不是文件时报提示并返回 null。 */
+  private activeTaskPath(): string | null {
     const file = this.app.workspace.getActiveFile()
     const path = file ? this.absPath(file) : null
-    if (!path) {
-      new Notice("请先在编辑器里打开一个任务文档")
-      return
-    }
+    if (!path) new Notice("请先在编辑器里打开一个任务文档")
+    return path
+  }
+
+  /** Command: launch/continue (or force-new) the opencode session for the open task. */
+  private async launchCurrentTask(mode: "continue" | "new"): Promise<void> {
+    const path = this.activeTaskPath()
+    if (!path) return
     try {
       const r = await fetch(this.settings.winHostUrl.replace(/\/+$/, "") + "/cap/taskflow/launch", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ path, mode: "continue" }),
+        body: JSON.stringify({ path, mode }),
       })
       const j = (await r.json()) as { ok?: boolean; error?: string }
       if (j.ok) {
-        new Notice("已启动/继续任务会话")
+        new Notice(mode === "new" ? "已为任务新开会话" : "已启动/继续任务会话")
         await this.activate("sessions")
       } else new Notice(`启动失败：${j.error ?? "该文档不是看板上的任务"}`)
+    } catch {
+      new Notice("连不上 win-host")
+    }
+  }
+
+  /** Command: send the PHA-sync instruction into the task's session. */
+  private async syncPhaCurrentTask(): Promise<void> {
+    const path = this.activeTaskPath()
+    if (!path) return
+    try {
+      const r = await fetch(this.settings.winHostUrl.replace(/\/+$/, "") + "/cap/taskflow/task/sync-pha", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path }),
+      })
+      const j = (await r.json()) as { ok?: boolean; error?: string }
+      if (j.ok) new Notice("已向任务会话发送 PHA 同步指令")
+      else new Notice(`PHA 同步失败：${j.error ?? "该文档不是看板上的任务"}`)
     } catch {
       new Notice("连不上 win-host")
     }

@@ -374,12 +374,45 @@ function addCard(raw: string, taskBase: string, column?: string, suffix = ""): s
 
 const norm = (p: string): string => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
 
-/** Windows 路径 → WSL 视角（C:\a\b → /mnt/c/a/b）。opencode 跑在 WSL 里，
- *  agent 直接读写文件时要用这个形态；win-host 自己始终用 Windows 路径。 */
-export function winToWsl(p: string): string {
-  const m = /^([A-Za-z]):[\\/](.*)$/.exec(p)
-  if (!m) return p.replace(/\\/g, "/")
-  return `/mnt/${m[1].toLowerCase()}/${m[2].replace(/\\/g, "/")}`
+// ── 路径映射：Windows 路径 → opencode 所在环境（虚拟机/WSL）的路径 ────────────
+// 文档在 Windows 盘上，opencode 可能跑在 VirtualBox 虚拟机（共享目录挂载点
+// 因人而异，如 /media/sf_vault）或 WSL（/mnt/c/...）。挂载点无法猜测，所以做成
+// 显式配置：pathMap = "WIN前缀=对端路径" 多条用 ; 分隔，最长前缀优先。
+// 未配置/未命中 → 返回 null，工具输出只给 Windows 路径并提示配置。
+
+export type PathRule = { win: string; vm: string }
+
+export function parsePathMap(raw: string): PathRule[] {
+  return raw
+    .split(";")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => {
+      const i = s.indexOf("=")
+      if (i <= 0) return null
+      return { win: s.slice(0, i).trim(), vm: s.slice(i + 1).trim() }
+    })
+    .filter((r): r is PathRule => !!r && !!r.win && !!r.vm)
+    .sort((a, b) => b.win.length - a.win.length) // 最长前缀优先
+}
+
+/** 按映射规则转换一个 Windows 路径；未命中返回 null。 */
+export function mapPath(rules: PathRule[], p: string): string | null {
+  const np = norm(p)
+  for (const r of rules) {
+    const nw = norm(r.win)
+    if (np === nw || np.startsWith(nw + "/")) {
+      const rest = p.replace(/\\/g, "/").slice(r.win.replace(/\\/g, "/").replace(/\/+$/, "").length)
+      return (r.vm.replace(/\/+$/, "") + rest).replace(/\/{2,}/g, "/")
+    }
+  }
+  return null
+}
+
+/** 工具输出里的对端路径描述：命中给路径，未命中给配置提示。 */
+function vmPathNote(rules: PathRule[], p: string): string {
+  const m = mapPath(rules, p)
+  return m ?? "（未配置路径映射——管理 → 任务看板 → 路径映射）"
 }
 
 // ── 看板卡片徽章 —— 卡片尾部维护 ` · n/N` 待办完成度（状态即列，无需重复）──
@@ -449,6 +482,7 @@ function cfg(ctx: HostContext) {
       .filter(Boolean),
     pollSeconds: Number(c.pollSeconds ?? 15),
     sessionModel: parseModelRef(String(c.sessionModel ?? "").trim()),
+    pathMap: parsePathMap(String(c.pathMap ?? "")),
   }
 }
 function parseModelRef(s: string): ModelRef | undefined {
@@ -643,12 +677,12 @@ function taskTemplate(input: { title: string; project: string; type: string; tod
   return serializeFrontmatter(fm, body)
 }
 
-function launchContract(meta: TaskMeta, sessionId: string, docText: string): string {
+function launchContract(meta: TaskMeta, sessionId: string, docText: string, rules: PathRule[]): string {
   const recs = listRecordSections(docText.split(/\r?\n---\r?\n/).slice(-1)[0] ?? docText)
   const nextNum = recs.length ? String(Math.max(...recs.map((r) => Number(r.num.split(".")[0]))) + 1) : "1"
   return [
     `【taskflow】你在处理任务「${meta.title}」（id: ${meta.id}，项目 ${meta.project}）。你本次的 session id 是 ${sessionId}。`,
-    `任务文档路径：Windows「${meta.path}」；WSL/Linux 环境用「${winToWsl(meta.path)}」。`,
+    `任务文档路径：Windows「${meta.path}」；你的运行环境内「${vmPathNote(rules, meta.path)}」。`,
     "",
     "文档结构（三段式）：frontmatter（tag/pha/sessions）→ 概览（待办 / 问题与解决）→",
     "「记录」（线性分章节的详细过程，编号 1 / 1.1 / 1.1.1）。「备注」属于用户，禁止改写。",
@@ -664,7 +698,7 @@ function launchContract(meta: TaskMeta, sessionId: string, docText: string): str
     `- task_set_status(id="${meta.id}", column)：移动看板卡片（列见看板）`,
     `- task_set_field(id="${meta.id}", key, value)：更新 type/pha_issue 字段`,
     `- task_get(id="${meta.id}")：读文档全文；task_list()：看板全览`,
-    "（若这些工具不在你的工具列表里，就按上面的结构直接编辑任务文档，路径用 WSL 形态。）",
+    "（若这些工具不在你的工具列表里，就按上面的结构直接编辑任务文档，路径用「你的运行环境内」那个形态。）",
     "",
     "规则：",
     "1. 只做「待办」里列出的事。",
@@ -712,7 +746,10 @@ async function launch(
   const t = resolveTask(ctx, idOrPath)
   if (!t) return { ok: false, error: `task_not_found: ${idOrPath}` }
   const conf = cfg(ctx)
-  const projectDir = dirname(t.meta.path)
+  // session 工作目录：配置了路径映射就用对端（虚拟机/容器）形态，opencode 直接可用；
+  // 未配置则原样传 Windows 路径（chat 层对同机场景有自己的兜底）。
+  const projectDirWin = dirname(t.meta.path)
+  const projectDir = mapPath(conf.pathMap, projectDirWin) ?? projectDirWin
 
   let sessionId: string | undefined
   let fresh = false
@@ -732,7 +769,7 @@ async function launch(
   }
 
   const doc = readFileSync(t.meta.path, "utf8")
-  const text = kind === "pha" ? phaSyncPrompt(t.meta, doc) : launchContract(t.meta, sessionId, doc)
+  const text = kind === "pha" ? phaSyncPrompt(t.meta, doc) : launchContract(t.meta, sessionId, doc, conf.pathMap)
   void ctx.native.chat
     .send({ text, sessionId, model: conf.sessionModel, directory: projectDir })
     .catch((e) => ctx.log(`launch send failed (${t.meta.id})`, e))
@@ -766,7 +803,7 @@ const tools: McpToolDef[] = [
       const conf = cfg(ctx)
       if (!conf.vaultDir) return { text: "vaultDir 未配置（管理 → 任务看板）", isError: true }
       refreshRegistry(ctx)
-      const out: string[] = [`扫描根目录: ${conf.vaultDir}（WSL: ${winToWsl(conf.vaultDir)}）`, ""]
+      const out: string[] = [`扫描根目录: ${conf.vaultDir}（你的环境内: ${vmPathNote(conf.pathMap, conf.vaultDir)}）`, ""]
       for (const b of reg.boards) {
         out.push(`看板: ${b.path}`)
         for (const col of b.columns) {
@@ -775,7 +812,7 @@ const tools: McpToolDef[] = [
           for (const t of inCol) {
             out.push(
               `    - ${t.id}｜${t.title}｜类型:${t.type || "—"}｜待办:${t.todos.done}/${t.todos.total}` +
-                `｜PHA:${t.pha_issue ? "已链" : "无"}｜文档(WSL): ${winToWsl(t.path)}`,
+                `｜PHA:${t.pha_issue ? "已链" : "无"}｜文档: ${mapPath(conf.pathMap, t.path) ?? t.path}`,
             )
           }
         }
@@ -792,7 +829,8 @@ const tools: McpToolDef[] = [
     async handler(args, ctx) {
       const t = resolveTask(ctx, String(args.id ?? ""))
       if (!t) return { text: `task not found: ${args.id}`, isError: true }
-      return { text: `路径: ${t.meta.path}\n路径(WSL): ${winToWsl(t.meta.path)}\n\n${t.raw}` }
+      const rules = cfg(ctx).pathMap
+      return { text: `路径(Windows): ${t.meta.path}\n路径(你的环境): ${vmPathNote(rules, t.meta.path)}\n\n${t.raw}` }
     },
   },
   {
@@ -873,7 +911,7 @@ const tools: McpToolDef[] = [
       }
       refreshRegistry(ctx)
       ctx.emit("taskflow:changed", { id: base })
-      return { text: `created: ${file}\nWSL 路径: ${winToWsl(file)}\n${cardNote}` }
+      return { text: `created: ${file}\n你的环境内路径: ${vmPathNote(conf.pathMap, file)}\n${cardNote}` }
     },
   },
   {
@@ -1182,6 +1220,15 @@ export const taskflowCapability: Capability = {
         type: "string",
         default: "已完成,Done,完成",
         help: "逗号分隔；卡片移到这些列时自动打勾，面板里归为已完成。",
+      },
+      {
+        key: "pathMap",
+        label: "路径映射",
+        type: "string",
+        placeholder: "如 C:\\Users\\me\\Documents\\Obsidian Vault=/media/sf_vault",
+        help:
+          "Windows 路径 → opencode 运行环境（VirtualBox 共享目录/WSL 等）的前缀映射，多条用 ; 分隔，最长前缀优先。" +
+          "配置后 task_* 工具会给出 agent 可直接读写的路径，session 工作目录也用映射后的形态。",
       },
       { key: "pollSeconds", label: "刷新间隔(秒)", type: "number", default: 15, help: "刷新看板/任务缓存的间隔（供焦点联动与面板）。0=不主动刷新。" },
       { key: "sessionModel", label: "会话模型(可选)", type: "string", placeholder: "provider/model，留空用默认" },

@@ -222,7 +222,7 @@ function SessionCard(props: {
   e: ChatMonitorEntry
   /** taskflow 任务归属（会话由任务看板发起时显示角标，点击跳任务看板） */
   task?: { id: string; title: string }
-  /** 卡片可拖走关联：焦点上下文条，或（跨 iframe）Obsidian 看板卡 */
+  /** 卡片可拖走关联：（跨 iframe）拖到 Obsidian 看板卡片上 */
   draggable?: boolean
   dragMime?: string
   onOpen: () => void
@@ -559,43 +559,9 @@ function SessionsPanel(): JSX.Element {
     }
   }
 
-  // ── taskflow 焦点联动 ──────────────────────────────────────────────────────
-  // Obsidian 切到某任务文档 → daemon 广播 taskflow:focus → 这里浮出上下文条并把
-  // 会话网格过滤成该任务关联的会话。DRAG_MIME 与任务看板一致，条本身是拖放目标。
-  type FocusTask = { id: string; title: string; project?: string; sessions: string[] }
-  const [focusTask, setFocusTask] = createSignal<FocusTask | undefined>()
-  const [onlyLinked, setOnlyLinked] = createSignal(true)
-  const [dropActive, setDropActive] = createSignal(false)
+  // 会话卡拖出去的 MIME —— 拖到 Obsidian 看板卡片（fork 插件的整卡落点）即关联。
+  // 焦点上下文条已下线：关联信息直接显示在看板卡片脚注上（v0.1.14 用户定稿）。
   const DRAG_MIME = "application/x-taskflow-session"
-  // 可选：切文档时自动切到会话面板（默认关，localStorage 开关）
-  const LS_AUTOSW = "winhost-taskflow-autoswitch"
-  const [autoSwitch, setAutoSwitch] = createSignal(localStorage.getItem(LS_AUTOSW) === "1")
-
-  async function associateFocus(sessionId: string): Promise<void> {
-    const f = focusTask()
-    if (!f) return
-    try {
-      await api.call("taskflow", "/associate", { id: f.id, sessionId })
-      await loadTaskMap()
-      // 乐观更新条上的关联集合
-      setFocusTask({ ...f, sessions: [...new Set([...f.sessions, sessionId])] })
-    } catch {
-      /* ignore */
-    }
-  }
-  async function launchFocus(mode: "continue" | "new"): Promise<void> {
-    const f = focusTask()
-    if (!f) return
-    try {
-      const r = await api.call<{ ok: boolean; sessionId?: string }>("taskflow", "/launch", { id: f.id, mode })
-      if (r.ok && r.sessionId) {
-        await loadTaskMap()
-        setWantSession(r.sessionId)
-      }
-    } catch {
-      /* ignore */
-    }
-  }
 
   // 深链：#panel=sessions&session=<id> 直接弹出对应会话（任务看板跳转用）。
   const sessionFromHash = () => /[#&]session=([\w-]+)/.exec(location.hash)?.[1]
@@ -639,19 +605,9 @@ function SessionsPanel(): JSX.Element {
     const onHash = () => setWantSession(sessionFromHash())
     window.addEventListener("hashchange", onHash)
     document.addEventListener("visibilitychange", onVis)
-    // taskflow:focus / taskflow:changed over SSE
+    // taskflow:changed over SSE —— 关联变化时刷新会话卡上的任务角标
     const offEvents = api.events((ev) => {
-      if (ev.type === "taskflow:focus") {
-        const p = ev.payload as { found?: boolean; id?: string; title?: string; project?: string; sessions?: string[] }
-        if (p?.found && p.id) {
-          setFocusTask({ id: p.id, title: p.title ?? p.id, project: p.project, sessions: p.sessions ?? [] })
-          setOnlyLinked(true)
-        } else {
-          setFocusTask(undefined)
-        }
-      } else if (ev.type === "taskflow:changed") {
-        void loadTaskMap()
-      }
+      if (ev.type === "taskflow:changed") void loadTaskMap()
     })
     onCleanup(() => {
       stopped = true
@@ -663,15 +619,7 @@ function SessionsPanel(): JSX.Element {
     })
   })
 
-  // 焦点任务的关联会话过滤（仅关联模式）。
-  const visibleGroups = createMemo(() => {
-    const f = focusTask()
-    if (!f || !onlyLinked()) return groups()
-    const set = new Set(f.sessions)
-    return groups()
-      .map((g) => ({ ...g, items: g.items.filter((e) => set.has(e.id)) }))
-      .filter((g) => g.items.length > 0)
-  })
+  const visibleGroups = groups
 
   // If the open session vanished (deleted), close the modal.
   createEffect(() => {
@@ -692,70 +640,6 @@ function SessionsPanel(): JSX.Element {
         </div>
       </header>
 
-      {/* taskflow 焦点上下文条 —— Obsidian 切到任务文档时浮出；本身是拖放目标 */}
-      <Show when={focusTask()}>
-        {(f) => (
-          <div
-            class="sess-taskbar"
-            data-drop={dropActive()}
-            onDragOver={(ev) => {
-              if (ev.dataTransfer?.types.includes(DRAG_MIME)) {
-                ev.preventDefault()
-                setDropActive(true)
-              }
-            }}
-            onDragLeave={() => setDropActive(false)}
-            onDrop={(ev) => {
-              ev.preventDefault()
-              setDropActive(false)
-              const sid = ev.dataTransfer?.getData(DRAG_MIME)
-              if (sid) void associateFocus(sid)
-            }}
-          >
-            <Icon name="file-text" size={14} />
-            <span class="sess-taskbar-title">{f().title}</span>
-            <Show when={f().project}>
-              <span class="sess-taskbar-proj">{f().project}</span>
-            </Show>
-            <span class="sess-taskbar-n">关联 {f().sessions.length}</span>
-            <span class="sess-taskbar-drophint">← 拖会话到此关联</span>
-            <span class="sess-spacer" />
-            <button
-              class="sess-taskbar-btn primary"
-              onClick={() => void launchFocus(f().sessions.length ? "continue" : "new")}
-              title={f().sessions.length ? "继续最近的关联会话" : "新建会话开始任务"}
-            >
-              {f().sessions.length ? "继续会话" : "启动会话"}
-            </button>
-            <Show when={f().sessions.length > 0}>
-              <button class="sess-taskbar-btn" onClick={() => void launchFocus("new")} title="另开新会话">
-                新会话
-              </button>
-            </Show>
-            <button
-              class="sess-taskbar-toggle"
-              data-on={onlyLinked()}
-              onClick={() => setOnlyLinked((v) => !v)}
-              title="仅显示关联会话 / 显示全部"
-            >
-              {onlyLinked() ? "仅关联" : "全部"}
-            </button>
-            <label class="sess-taskbar-auto" title="切换 Obsidian 文档时自动跳到会话面板">
-              <input
-                type="checkbox"
-                checked={autoSwitch()}
-                onChange={(e) => {
-                  const v = e.currentTarget.checked
-                  setAutoSwitch(v)
-                  localStorage.setItem(LS_AUTOSW, v ? "1" : "0")
-                }}
-              />
-              自动跟随
-            </label>
-          </div>
-        )}
-      </Show>
-
       <div class="panel-body sess-body">
         <Show when={err()}>
           <div class="sess-err">{err()}</div>
@@ -765,11 +649,7 @@ function SessionsPanel(): JSX.Element {
             when={visibleGroups().length > 0}
             fallback={
               <div class="sess-empty">
-                {!loaded()
-                  ? "加载中…"
-                  : focusTask() && onlyLinked()
-                    ? "该任务还没有关联会话 —— 点上方「启动会话」，或把会话拖到任务条上"
-                    : "没有会话 —— 用 Ctrl+Space 发起一个任务"}
+                {!loaded() ? "加载中…" : "没有会话 —— 用 Ctrl+Space 发起一个任务"}
               </div>
             }
           >

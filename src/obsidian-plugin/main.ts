@@ -60,21 +60,15 @@ export default class WinHostPlugin extends Plugin {
         }
       }),
     )
-    // taskflow 焦点联动：切换当前文档 → 告诉 daemon 当前活动文件的绝对路径，
-    // daemon 判断是不是任务并广播 taskflow:focus，控制台据此浮出上下文条。
-    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.pushFocus()))
-    this.registerEvent(this.app.workspace.on("file-open", () => this.pushFocus()))
-    this.app.workspace.onLayoutReady(() => {
-      this.reportVault()
-      this.pushFocus()
-    })
+    // 焦点联动已下线（v0.1.14 用户定稿）：任务⇄会话的关联信息直接显示在
+    // 看板卡片脚注上，控制台不再随文档切换过滤。只保留 vault 根目录上报。
+    this.app.workspace.onLayoutReady(() => this.reportVault())
 
     this.addSettingTab(new WinHostSettingTab(this.app, this))
   }
 
   onunload(): void {
     this.es?.close()
-    if (this.focusTimer) clearTimeout(this.focusTimer)
   }
 
   /** The console URL the iframe loads = the daemon serving out/console at `/`. */
@@ -100,23 +94,6 @@ export default class WinHostPlugin extends Plugin {
     }).catch(() => {
       /* daemon down — best-effort */
     })
-  }
-
-  private focusTimer?: ReturnType<typeof setTimeout>
-  /** Debounced POST of the active file's abs path to the daemon (focus link). */
-  private pushFocus(): void {
-    if (this.focusTimer) clearTimeout(this.focusTimer)
-    this.focusTimer = setTimeout(() => {
-      const file = this.app.workspace.getActiveFile()
-      const path = file ? this.absPath(file) : null
-      void fetch(this.settings.winHostUrl.replace(/\/+$/, "") + "/cap/taskflow/focus", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ path: path ?? "" }),
-      }).catch(() => {
-        /* daemon down / no taskflow — focus is best-effort */
-      })
-    }, 150)
   }
 
   /** Command: launch/continue the opencode session for the currently open task. */

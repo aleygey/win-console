@@ -10,7 +10,7 @@
  * 读写同一个 md（拖卡=改状态），绝不把 status 存进任务 frontmatter（消灭双源）。
  *
  * 「什么是任务」= 它的 `[[链接]]` 出现在某个看板上。任务文档放哪都行、目录不限。
- * 没有自动派发、没有轮询状态机——poll 仅用于刷新注册表缓存（供焦点联动/面板）。
+ * 没有自动派发、没有轮询状态机——poll 仅用于刷新注册表缓存（供看板脚注/面板）。
  *
  * 与 opencode 的接口：MCP 工具（task_*）。若工具不可用，agent 直接编辑同名区域，
  * 文件本身就是接口。
@@ -1293,39 +1293,6 @@ const routes: RouteDef[] = [
     },
   },
   {
-    // Obsidian plugin posts the active file's ABSOLUTE path; we resolve whether
-    // it's a task and broadcast taskflow:focus so the console reacts.
-    method: "POST",
-    path: "/focus",
-    async handler(req, ctx) {
-      const path = String(req.body?.path ?? "")
-      if (!path) {
-        ctx.emit("taskflow:focus", { found: false })
-        return { body: { ok: true, found: false } }
-      }
-      let meta = reg.tasks.get(norm(path))
-      if (!meta) {
-        refreshRegistry(ctx)
-        meta = reg.tasks.get(norm(path))
-      }
-      if (!meta) {
-        ctx.emit("taskflow:focus", { found: false, path })
-        return { body: { ok: true, found: false } }
-      }
-      const payload = {
-        found: true,
-        id: meta.id,
-        title: meta.title,
-        project: meta.project,
-        status: meta.status,
-        sessions: meta.sessions,
-        todos: meta.todos,
-      }
-      ctx.emit("taskflow:focus", payload)
-      return { body: { ok: true, ...payload } }
-    },
-  },
-  {
     method: "POST",
     path: "/launch",
     async handler(req, ctx) {
@@ -1373,7 +1340,7 @@ export const taskflowCapability: Capability = {
   icon: "list-checks",
   description: "看板中心的任务-会话关联台：解析 Obsidian Kanban 看板，连接任务⇄session⇄PHA，标准化文档，从任务一键启动/继续会话。",
   hasPanel: true,
-  events: ["taskflow:focus", "taskflow:changed"],
+  events: ["taskflow:changed"],
   configSchema: {
     fields: [
       {
@@ -1399,7 +1366,7 @@ export const taskflowCapability: Capability = {
           "Windows 路径 → opencode 运行环境（VirtualBox 共享目录/WSL 等）的前缀映射，多条用 ; 分隔，最长前缀优先。" +
           "配置后 task_* 工具会给出 agent 可直接读写的路径，session 工作目录也用映射后的形态。",
       },
-      { key: "pollSeconds", label: "刷新间隔(秒)", type: "number", default: 15, help: "刷新看板/任务缓存的间隔（供焦点联动与面板）。0=不主动刷新。" },
+      { key: "pollSeconds", label: "刷新间隔(秒)", type: "number", default: 15, help: "刷新看板/任务缓存的间隔（供看板脚注与面板）。0=不主动刷新。" },
       { key: "sessionModel", label: "会话模型(可选)", type: "string", placeholder: "provider/model，留空用默认" },
     ],
   },

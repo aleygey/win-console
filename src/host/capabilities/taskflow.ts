@@ -499,6 +499,23 @@ function vmPathNote(rules: PathRule[], p: string): string {
 
 const BADGE_RE = /\s*·\s*\d+\/\d+\s*$/
 
+/** 清理看板卡片尾部的历史 ` · n/N` 徽章（徽章已改由看板 fork 脚注展示）；无变化返回 null。 */
+export function stripCardBadges(raw: string): string | null {
+  const lines = raw.split(/\r?\n/)
+  let changed = false
+  for (let i = 0; i < lines.length; i++) {
+    if (/^%%/.test(lines[i])) break
+    if (!/^\s*[-*]\s*\[[ xX]\]/.test(lines[i])) continue
+    if (!cardLink(lines[i])) continue
+    const next = lines[i].replace(BADGE_RE, "")
+    if (next !== lines[i]) {
+      lines[i] = next
+      changed = true
+    }
+  }
+  return changed ? lines.join("\n") : null
+}
+
 /** 对一份看板，把每张可解析卡片的待办徽章刷成最新；无变化返回 null。 */
 export function applyCardBadges(raw: string, statsByLink: Map<string, { done: number; total: number }>): string | null {
   const lines = raw.split(/\r?\n/)
@@ -555,9 +572,17 @@ let reportedVaultDir = ""
 
 function cfg(ctx: HostContext) {
   const c = ctx.config()
+  // 扫描根：手动配置支持 ; 分隔多根；Obsidian 插件上报的当前 vault 始终并入
+  // （换 vault 测试零配置）。第一根作为 task_create 相对路径的基准。
+  const manual = String(c.vaultDir ?? "")
+    .split(";")
+    .map((s) => s.trim())
+    .filter(Boolean)
+  const roots = [...manual]
+  if (reportedVaultDir && !roots.some((r) => norm(r) === norm(reportedVaultDir))) roots.push(reportedVaultDir)
   return {
-    // 扫描根目录：手动配置优先；为空时用 Obsidian 插件自动上报的当前 vault
-    vaultDir: String(c.vaultDir ?? "").trim() || reportedVaultDir,
+    vaultDirs: roots,
+    vaultDir: roots[0] ?? "",
     doneColumns: String(c.doneColumns ?? "已完成,Done,完成")
       .split(",")
       .map((s) => s.trim().toLowerCase())
@@ -591,8 +616,15 @@ function listMd(dir: string, out: string[] = []): string[] {
 }
 
 /** Rebuild the registry: discover boards, resolve their card links to files. */
-function buildRegistry(vaultDir: string): Registry {
-  const files = vaultDir && existsSync(vaultDir) ? listMd(vaultDir) : []
+function buildRegistry(vaultDirs: string[]): Registry {
+  const files: string[] = []
+  const seenRoot = new Set<string>()
+  for (const root of vaultDirs) {
+    const nr = norm(root)
+    if (!root || seenRoot.has(nr) || !existsSync(root)) continue
+    seenRoot.add(nr)
+    listMd(root, files)
+  }
   // basename → candidate paths (for [[link]] resolution)
   const byBase = new Map<string, string[]>()
   for (const f of files) {
@@ -614,7 +646,8 @@ function buildRegistry(vaultDir: string): Registry {
   const tasks = new Map<string, TaskMeta>()
   const byId = new Map<string, string>()
   for (const board of boards) {
-    const boardProject = boardProjectName(board.path, board.raw, vaultDir)
+    const root = vaultDirs.find((r) => norm(board.path).startsWith(norm(r) + "/")) ?? vaultDirs[0] ?? ""
+    const boardProject = boardProjectName(board.path, board.raw, root)
     for (const col of board.columns) {
       for (const card of col.cards) {
         const cands = byBase.get(card.link.toLowerCase())
@@ -633,18 +666,10 @@ function buildRegistry(vaultDir: string): Registry {
       }
     }
   }
-  // 卡片徽章同步：把每张卡尾部的 ` · n/N` 刷成任务当前待办完成度（仅变化时写盘，
-  // 稳态零写入；看板正被 Obsidian 编辑时写失败静默跳过，下轮补上）。
+  // 卡片标题徽章已下线（待办完成度改由看板 fork 的卡片脚注展示）——
+  // 这里只做一次性清理：把历史写入的 ` · n/N` 尾巴剥掉（无徽章时零写入）。
   for (const b of boards) {
-    const stats = new Map<string, { done: number; total: number }>()
-    for (const col of b.columns) {
-      for (const card of col.cards) {
-        const np = byId.get(card.link.toLowerCase())
-        const t = np ? tasks.get(np) : undefined
-        if (t) stats.set(card.link.toLowerCase(), t.todos)
-      }
-    }
-    const next = applyCardBadges(b.raw, stats)
+    const next = stripCardBadges(b.raw)
     if (next) {
       try {
         writeFileSync(b.path, next, "utf8")
@@ -709,7 +734,7 @@ function readTaskMeta(file: string, board: string, column: string, boardProject:
 }
 
 function refreshRegistry(ctx: HostContext): Registry {
-  reg = buildRegistry(cfg(ctx).vaultDir)
+  reg = buildRegistry(cfg(ctx).vaultDirs)
   return reg
 }
 
@@ -897,9 +922,12 @@ const tools: McpToolDef[] = [
     inputSchema: { type: "object", properties: {} },
     async handler(_args, ctx) {
       const conf = cfg(ctx)
-      if (!conf.vaultDir) return { text: "vaultDir 未配置（管理 → 任务看板）", isError: true }
+      if (!conf.vaultDirs.length) return { text: "扫描根目录未配置（管理 → 任务看板，或打开 Obsidian 让插件自动上报）", isError: true }
       refreshRegistry(ctx)
-      const out: string[] = [`扫描根目录: ${conf.vaultDir}（你的环境内: ${vmPathNote(conf.pathMap, conf.vaultDir)}）`, ""]
+      const out: string[] = [
+        ...conf.vaultDirs.map((r, i) => `扫描根目录${conf.vaultDirs.length > 1 ? ` ${i + 1}` : ""}: ${r}（你的环境内: ${vmPathNote(conf.pathMap, r)}）`),
+        "",
+      ]
       for (const b of reg.boards) {
         out.push(`看板: ${b.path}`)
         for (const col of b.columns) {
@@ -932,7 +960,7 @@ const tools: McpToolDef[] = [
   {
     name: "task_create",
     description:
-      "按统一模板新建任务文档，并在指定看板列插入卡片（卡片自动带待办完成度徽章）。" +
+      "按统一模板新建任务文档，并在指定看板列插入卡片。" +
       "调用前必须做两件事：① task_list 查看已有任务与看板列，避免重复创建；" +
       "② dir（文档存放目录）和 column（看板列）如果用户没有明说，先在对话里询问用户确认，不要擅自决定。" +
       "创建后若任务还没有 PHA：在有 PHA 工具的会话里建一个 PHA 条目并用 task_set_field 回填 pha_issue，或提醒用户稍后处理。",
@@ -954,7 +982,7 @@ const tools: McpToolDef[] = [
     },
     async handler(args, ctx) {
       const conf = cfg(ctx)
-      if (!conf.vaultDir) return { text: "vaultDir 未配置", isError: true }
+      if (!conf.vaultDirs.length) return { text: "扫描根目录未配置（管理 → 任务看板，或打开 Obsidian 让插件自动上报）", isError: true }
       const title = String(args.title ?? "").trim()
       if (!title) return { text: "title required", isError: true }
       const dirArg = String(args.dir ?? "").trim()
@@ -964,11 +992,11 @@ const tools: McpToolDef[] = [
           isError: true,
         }
       }
-      // 绝对路径 = 盘符 或 UNC（\\server\share / //server/share）；否则相对扫描根
+      // 绝对路径 = 盘符 或 UNC（\\server\share / //server/share）；否则相对第一个扫描根
       const isAbs = /^[A-Za-z]:[\\/]/.test(dirArg) || /^(\\\\|\/\/)/.test(dirArg)
       const dir = isAbs ? dirArg : join(conf.vaultDir, dirArg)
-      if (!norm(dir).startsWith(norm(conf.vaultDir))) {
-        return { text: `目录必须在扫描根目录内: ${conf.vaultDir}`, isError: true }
+      if (!conf.vaultDirs.some((r) => norm(dir).startsWith(norm(r)))) {
+        return { text: `目录必须在扫描根目录内: ${conf.vaultDirs.join(" 或 ")}`, isError: true }
       }
       mkdirSync(dir, { recursive: true })
       const safe = title.replace(/[\\/:*?"<>|]/g, "·")
@@ -993,14 +1021,16 @@ const tools: McpToolDef[] = [
       const board =
         (boardArg &&
           reg.boards.find((b) => norm(b.path) === norm(boardArg) || basename(b.path).toLowerCase().startsWith(boardArg))?.path) ||
-        reg.boards.find((b) => boardProjectName(b.path, safeRead(b.path), conf.vaultDir) === String(args.project))?.path ||
+        reg.boards.find((b) => {
+          const root = conf.vaultDirs.find((r) => norm(b.path).startsWith(norm(r) + "/")) ?? conf.vaultDir
+          return boardProjectName(b.path, safeRead(b.path), root) === String(args.project)
+        })?.path ||
         reg.boards[0]?.path
       const base = basename(file).replace(/\.md$/i, "")
       let cardNote = "（未找到看板，请手动把 [[链接]] 加到看板）"
       if (board) {
         try {
-          const badge = todos.length ? ` · 0/${todos.length}` : ""
-          writeFileSync(board, addCard(readFileSync(board, "utf8"), base, String(args.column ?? "").trim() || undefined, badge), "utf8")
+          writeFileSync(board, addCard(readFileSync(board, "utf8"), base, String(args.column ?? "").trim() || undefined), "utf8")
           cardNote = `（已加入看板${args.column ? `「${args.column}」列` : "第一列"}）`
         } catch (e) {
           ctx.log("task_create: add card failed", e)
@@ -1223,7 +1253,8 @@ const routes: RouteDef[] = [
     path: "/tasks",
     async handler(_req, ctx) {
       const conf = cfg(ctx)
-      if (!conf.vaultDir) return { body: { ok: false, error: "vaultDir 未配置（管理 → 任务看板）", tasks: [], boards: [] } }
+      if (!conf.vaultDirs.length)
+        return { body: { ok: false, error: "扫描根目录未配置（管理 → 任务看板，或打开 Obsidian 让插件自动上报）", tasks: [], boards: [] } }
       refreshRegistry(ctx)
       return {
         body: {
@@ -1258,7 +1289,7 @@ const routes: RouteDef[] = [
           ctx.emit("taskflow:changed", {})
         }
       }
-      return { body: { ok: true, effective: cfg(ctx).vaultDir } }
+      return { body: { ok: true, effective: cfg(ctx).vaultDirs } }
     },
   },
   {
@@ -1349,8 +1380,8 @@ export const taskflowCapability: Capability = {
         key: "vaultDir",
         label: "扫描根目录",
         type: "string",
-        placeholder: "留空=自动用当前 Obsidian vault；支持 UNC 如 \\\\192.168.56.100\\share",
-        help: "taskflow 在此目录下递归查找 Obsidian Kanban 看板（含 kanban-plugin: board 的文件）；看板上 [[链接]] 到的文档即任务。留空时自动使用 Obsidian 插件上报的当前 vault 根目录。",
+        placeholder: "留空=自动用当前 Obsidian vault；多根用 ; 分隔；支持 UNC 如 \\\\192.168.56.100\\share",
+        help: "taskflow 在这些目录下递归查找 Obsidian Kanban 看板（含 kanban-plugin: board 的文件）；看板上 [[链接]] 到的文档即任务。多根用 ; 分隔；Obsidian 插件上报的当前 vault 始终自动并入（换 vault 无需改配置）。",
       },
       {
         key: "doneColumns",
@@ -1381,7 +1412,7 @@ export const taskflowCapability: Capability = {
     const tick = () => {
       if (pollStop) return
       const conf = cfg(ctx)
-      if (conf.pollSeconds <= 0 || !conf.vaultDir) {
+      if (conf.pollSeconds <= 0 || !conf.vaultDirs.length) {
         pollTimer = setTimeout(tick, 30_000)
         return
       }

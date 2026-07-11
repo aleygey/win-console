@@ -45,6 +45,21 @@ export default class WinHostPlugin extends Plugin {
     }
     window.addEventListener("taskflow:open-session", onOpenSession)
     this.register(() => window.removeEventListener("taskflow:open-session", onOpenSession))
+    // 控制台 iframe 发来的跨文档消息：会话卡上的任务角标点击 → 在 Obsidian 里打开任务文档
+    const onFrameMessage = (ev: MessageEvent) => {
+      const d = ev.data as { type?: string; id?: string } | null
+      if (d?.type === "winhost-open-task" && d.id) void this.app.workspace.openLinkText(d.id, "", false)
+    }
+    window.addEventListener("message", onFrameMessage)
+    this.register(() => window.removeEventListener("message", onFrameMessage))
+    // 主题跟随：Obsidian 切明暗（css-change）→ 推给所有控制台 iframe
+    this.registerEvent(
+      this.app.workspace.on("css-change", () => {
+        for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+          if (leaf.view instanceof WinHostView) leaf.view.postTheme()
+        }
+      }),
+    )
     // taskflow 焦点联动：切换当前文档 → 告诉 daemon 当前活动文件的绝对路径，
     // daemon 判断是不是任务并广播 taskflow:focus，控制台据此浮出上下文条。
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.pushFocus()))

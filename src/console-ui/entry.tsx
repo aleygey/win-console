@@ -19,6 +19,21 @@ import "../panels/panels/mailflow"
 import "../panels/panels/exp"
 import "./panels/manage"
 
+// 主题跟随宿主：tokens.css 是 color-scheme: light dark（跟 OS），但嵌在 Obsidian
+// iframe 里时要跟 Obsidian 的明暗设置 —— 初始值来自 ?theme= 查询参数，之后宿主在
+// css-change 时 postMessage({type:'winhost-theme',dark}) 过来。独立窗口无参数=照旧跟 OS。
+function applyTheme(dark: boolean): void {
+  document.documentElement.style.colorScheme = dark ? "dark" : "light"
+}
+{
+  const q = new URLSearchParams(location.search).get("theme")
+  if (q === "dark" || q === "light") applyTheme(q === "dark")
+  window.addEventListener("message", (ev: MessageEvent) => {
+    const d = ev.data as { type?: string; dark?: boolean } | null
+    if (d?.type === "winhost-theme" && typeof d.dark === "boolean") applyTheme(d.dark)
+  })
+}
+
 async function main(): Promise<void> {
   const root = document.getElementById("root")
   if (!root) throw new Error('Root element "#root" not found')

@@ -222,7 +222,7 @@ function SessionCard(props: {
   e: ChatMonitorEntry
   /** taskflow 任务归属（会话由任务看板发起时显示角标，点击跳任务看板） */
   task?: { id: string; title: string }
-  /** 焦点任务激活时，卡片可拖到上下文条完成关联 */
+  /** 卡片可拖走关联：焦点上下文条，或（跨 iframe）Obsidian 看板卡 */
   draggable?: boolean
   dragMime?: string
   onOpen: () => void
@@ -248,10 +248,11 @@ function SessionCard(props: {
               role="button"
               tabIndex={0}
               class="sess-task-chip"
-              title={`任务 ${t().id} · ${t().title}（点击打开任务看板）`}
+              title={`任务 ${t().id} · ${t().title}（点击在 Obsidian 打开任务文档）`}
               onClick={(ev) => {
                 ev.stopPropagation()
-                location.hash = "#panel=taskflow"
+                // 任务看板面板已下线：请宿主（Obsidian 里的 winhost-console 插件）打开任务文档
+                window.parent?.postMessage({ type: "winhost-open-task", id: t().id }, "*")
               }}
             >
               {t().id}
@@ -786,7 +787,7 @@ function SessionsPanel(): JSX.Element {
                         <SessionCard
                           e={e}
                           task={taskBySession()[e.id]}
-                          draggable={!!focusTask()}
+                          draggable
                           dragMime={DRAG_MIME}
                           onOpen={() => setOpenId(e.id)}
                         />

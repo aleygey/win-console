@@ -104,9 +104,16 @@ export function serializeFrontmatter(fm: Frontmatter, body: string): string {
 // the format-enforcing tools below; humans own 备注.
 // ═════════════════════════════════════════════════════════════════════════════
 
-// 文档三段式：头部 frontmatter（tag/pha/sessions）→ 概览（待办/问题与解决，
-// 反映整体状态）→「记录」（线性分章节的详细过程，1 / 1.1 / 1.1.1）。备注归人。
-const SECTIONS = ["待办", "问题与解决", "记录", "备注"] as const
+// 文档布局 v5（用户定稿）：
+//   frontmatter（tag/pha/sessions）
+//   # 标题
+//   ## 待办            ← 状态区：任务唯一的 todo list（人机都可勾）
+//   ---                ← 分隔线：上面扫一眼状态，下面是任务正文
+//   ## 1 章节标题       ← 正文区：编号章节（1/1.1/1.1.1），结构由工具控制
+//   ### 1.1 …
+//   ## 日志            ← 置底：表格式阶段性日志（时间|会话|记录），不是重点
+const LOG_HEADING = "## 日志"
+const LOG_TABLE_HEADER = ["| 时间 | 会话 | 记录 |", "| --- | --- | --- |"]
 
 /** Return [start,end) line indices of the `## <heading>` block body (exclusive
  *  of the heading line), or null if the heading is absent. */
@@ -115,7 +122,7 @@ function sectionRange(lines: string[], heading: string): { headIdx: number; star
   if (headIdx < 0) return null
   let end = lines.length
   for (let i = headIdx + 1; i < lines.length; i++) {
-    if (/^#{1,2} /.test(lines[i])) {
+    if (/^#{1,2} /.test(lines[i]) || lines[i].trim() === "---") {
       end = i
       break
     }
@@ -123,26 +130,57 @@ function sectionRange(lines: string[], heading: string): { headIdx: number; star
   return { headIdx, start: headIdx + 1, end }
 }
 
-/** Ensure the template sections exist (non-destructive); returns possibly-grown body. */
-function ensureSections(body: string): string {
+/** 非破坏性补齐 v5 布局：待办、`---` 分隔线、置底的日志表。已有内容不动。 */
+export function ensureLayout(body: string): string {
   let out = body
-  for (const s of SECTIONS) {
-    if (!sectionRange(out.split(/\r?\n/), s)) {
-      out = out.replace(/\s*$/, "") + `\n\n## ${s}\n`
-    }
+  let lines = out.split(/\r?\n/)
+  if (!sectionRange(lines, "待办")) {
+    // 插在 H1 标题之后，否则文档最前
+    const h1 = lines.findIndex((l) => /^# /.test(l))
+    const at = h1 >= 0 ? h1 + 1 : 0
+    lines = [...lines.slice(0, at), "", "## 待办", "", ...lines.slice(at)]
+    out = lines.join("\n")
+  }
+  if (!out.split(/\r?\n/).some((l) => l.trim() === "---")) {
+    out = out.replace(/\s*$/, "") + "\n\n---\n"
+  }
+  if (!out.split(/\r?\n/).some((l) => l.trim() === LOG_HEADING)) {
+    out = out.replace(/\s*$/, "") + `\n\n${LOG_HEADING}\n\n${LOG_TABLE_HEADER.join("\n")}\n`
   }
   return out
 }
 
-/** Append a line at the end of a section's block (creating the section if needed). */
-function appendToSection(body: string, heading: string, line: string): string {
-  let lines = ensureSections(body).split(/\r?\n/)
-  const r = sectionRange(lines, heading)!
-  // trim trailing blank lines inside the section, then insert
+/** 正文区（章节区）的行范围：第一条 `---` 之后，`## 日志` 之前。 */
+function chapterZone(lines: string[]): { start: number; end: number } {
+  let start = 0
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim() === "---") {
+      start = i + 1
+      break
+    }
+  }
+  let end = lines.length
+  for (let i = start; i < lines.length; i++) {
+    if (lines[i].trim() === LOG_HEADING) {
+      end = i
+      break
+    }
+  }
+  return { start, end }
+}
+
+/** 向置底的「日志」表追加一行（阶段性记录；表头缺失自动补）。 */
+export function appendLogRow(body: string, time: string, session: string, text: string): string {
+  const withLayout = ensureLayout(body)
+  const lines = withLayout.split(/\r?\n/)
+  const r = sectionRange(lines, "日志")!
+  const cell = (s: string) => s.replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim()
+  const row = `| ${cell(time)} | ${cell(session) || "—"} | ${cell(text)} |`
+  const hasHeader = lines.slice(r.start, r.end).some((l) => /^\|.*\|/.test(l.trim()))
   let end = r.end
   while (end > r.start && lines[end - 1].trim() === "") end--
-  lines = [...lines.slice(0, end), line, ...lines.slice(end)]
-  return lines.join("\n")
+  const insert = hasHeader ? [row] : [...LOG_TABLE_HEADER, row]
+  return [...lines.slice(0, end), ...insert, ...lines.slice(end)].join("\n")
 }
 
 /** Parse the 待办 checkbox list → {done,total,items}. */
@@ -161,7 +199,7 @@ export function parseTodos(body: string): { done: number; total: number; items: 
 
 /** Toggle / add a todo. Returns new body (unchanged if action can't apply). */
 function editTodo(body: string, action: "check" | "uncheck" | "add", text: string): string {
-  const withSecs = ensureSections(body)
+  const withSecs = ensureLayout(body)
   const lines = withSecs.split(/\r?\n/)
   const r = sectionRange(lines, "待办")!
   const norm = (s: string) => s.replace(/\s+/g, "").toLowerCase()
@@ -220,54 +258,77 @@ export function sanitizeSectionContent(content: string): string {
   return out.join("\n")
 }
 
-/** 在「记录」区写入/替换一个编号章节。
- *  - 已存在同号章节 → 替换其标题与正文（保留其子章节——只替换到下一个编号标题为止）；
+const CHAPTER_RE = /^(#{2,4})\s+(\d+(?:\.\d+){0,2})\s+(.*)$/
+
+/** 在正文区（`---` 与「## 日志」之间）写一个编号章节。
+ *  - mode="replace"（默认）：同号章节整体重写（子章节保留——替换只到下一个编号标题）；
+ *  - mode="append"：同号章节存在时在其正文末尾追加（增量记录，不动已有内容）；
  *  - 不存在 → 按编号顺序插入正确位置；
- *  - 标题深度：1→###、1.1→####、1.1.1→#####。 */
-export function writeRecordSection(body: string, section: string, title: string, content: string): string | null {
+ *  - 标题深度：1→##、1.1→###、1.1.1→####（Obsidian 大纲友好）。 */
+export function writeRecordSection(
+  body: string,
+  section: string,
+  title: string,
+  content: string,
+  mode: "replace" | "append" = "replace",
+): string | null {
   const num = parseSecNum(section)
   if (!num) return null
-  const withSecs = ensureSections(body)
-  const lines = withSecs.split(/\r?\n/)
-  const r = sectionRange(lines, "记录")!
-  const headingRe = /^(#{3,5})\s+(\d+(?:\.\d+){0,2})\s+(.*)$/
+  const withLayout = ensureLayout(body)
+  const lines = withLayout.split(/\r?\n/)
+  const zone = chapterZone(lines)
 
   type Found = { line: number; num: number[] }
   const heads: Found[] = []
-  for (let i = r.start; i < r.end; i++) {
-    const m = headingRe.exec(lines[i])
+  for (let i = zone.start; i < zone.end; i++) {
+    const m = CHAPTER_RE.exec(lines[i])
     if (m) {
       const n = parseSecNum(m[2])
       if (n) heads.push({ line: i, num: n })
     }
   }
 
-  const newHeading = `${"#".repeat(2 + num.length)} ${section} ${title.trim()}`
-  const newBlock = [newHeading, "", sanitizeSectionContent(content).replace(/\s+$/, ""), ""]
-
+  const clean = sanitizeSectionContent(content).replace(/\s+$/, "")
+  const newHeading = `${"#".repeat(1 + num.length)} ${section} ${title.trim()}`
   const existing = heads.find((h) => cmpSecNum(h.num, num) === 0)
+
   if (existing) {
-    // 替换：从该标题到下一个编号标题（任意层级）之前 —— 子章节是后续标题，天然保留
     const idx = heads.indexOf(existing)
-    const end = idx + 1 < heads.length ? heads[idx + 1].line : r.end
-    return [...lines.slice(0, existing.line), ...newBlock, ...lines.slice(end)].join("\n")
+    const end = idx + 1 < heads.length ? heads[idx + 1].line : zone.end
+    if (mode === "append") {
+      // 追加到该章节自己的正文末尾（下一个编号标题之前），标题保持原样（title 非空则更新）
+      let at = end
+      while (at > existing.line + 1 && lines[at - 1].trim() === "") at--
+      const head = title.trim() ? newHeading : lines[existing.line]
+      return [
+        ...lines.slice(0, existing.line),
+        head,
+        ...lines.slice(existing.line + 1, at),
+        "",
+        clean,
+        "",
+        ...lines.slice(end),
+      ].join("\n")
+    }
+    // replace：从标题到下一个编号标题之前整体重写（任意层级的下个标题=子章节也保留在后面）
+    return [...lines.slice(0, existing.line), newHeading, "", clean, "", ...lines.slice(end)].join("\n")
   }
-  // 插入：第一个编号大于目标的标题之前；否则「记录」区末尾
+
+  // 新章节：插到第一个编号更大的标题之前；否则正文区末尾（日志之前）
   const after = heads.find((h) => cmpSecNum(h.num, num) > 0)
-  let at = after ? after.line : r.end
-  while (at > r.start && lines[at - 1].trim() === "" && !after) at-- // 末尾插入前收掉多余空行
-  return [...lines.slice(0, at), ...newBlock, ...lines.slice(at)].join("\n")
+  let at = after ? after.line : zone.end
+  while (at > zone.start && lines[at - 1].trim() === "" && !after) at--
+  return [...lines.slice(0, at), newHeading, "", clean, "", ...lines.slice(at)].join("\n")
 }
 
-/** 列出「记录」区现有章节（给 task_list/契约用，agent 据此知道下一个编号）。 */
+/** 列出正文区现有章节（给 task_list/契约用，agent 据此知道下一个编号）。 */
 export function listRecordSections(body: string): Array<{ num: string; title: string }> {
   const lines = body.split(/\r?\n/)
-  const r = sectionRange(lines, "记录")
-  if (!r) return []
+  const zone = chapterZone(lines)
   const out: Array<{ num: string; title: string }> = []
-  for (let i = r.start; i < r.end; i++) {
-    const m = /^#{3,5}\s+(\d+(?:\.\d+){0,2})\s+(.*)$/.exec(lines[i])
-    if (m) out.push({ num: m[1], title: m[2].trim() })
+  for (let i = zone.start; i < zone.end; i++) {
+    const m = CHAPTER_RE.exec(lines[i])
+    if (m) out.push({ num: m[2], title: m[3].trim() })
   }
   return out
 }
@@ -489,12 +550,14 @@ type Registry = {
 let reg: Registry = { tasks: new Map(), byId: new Map(), boards: [], builtAt: 0 }
 let pollTimer: ReturnType<typeof setTimeout> | undefined
 let pollStop = false
+/** Obsidian 插件启动时上报的当前 vault 根目录（手动配置留空时的默认值）。 */
+let reportedVaultDir = ""
 
 function cfg(ctx: HostContext) {
   const c = ctx.config()
   return {
-    vaultDir: String(c.vaultDir ?? "").trim(),
-    newTaskDir: String(c.newTaskDir ?? "").trim(),
+    // 扫描根目录：手动配置优先；为空时用 Obsidian 插件自动上报的当前 vault
+    vaultDir: String(c.vaultDir ?? "").trim() || reportedVaultDir,
     doneColumns: String(c.doneColumns ?? "已完成,Done,完成")
       .split(",")
       .map((s) => s.trim().toLowerCase())
@@ -692,39 +755,53 @@ function taskTemplate(input: { title: string; project: string; type: string; tod
     created: input.date,
   }
   const todos = (input.todos.length ? input.todos : ["（待补充）"]).map((t) => `- [ ] ${t}`).join("\n")
-  const body = [`# ${input.title}`, "", "## 待办", todos, "", "## 问题与解决", "", "## 记录", "", "## 备注", ""].join("\n")
+  const body = [
+    `# ${input.title}`,
+    "",
+    "## 待办",
+    todos,
+    "",
+    "---",
+    "",
+    LOG_HEADING,
+    "",
+    ...LOG_TABLE_HEADER,
+    "",
+  ].join("\n")
   return serializeFrontmatter(fm, body)
 }
 
 function launchContract(meta: TaskMeta, sessionId: string, docText: string, rules: PathRule[]): string {
-  const recs = listRecordSections(docText.split(/\r?\n---\r?\n/).slice(-1)[0] ?? docText)
+  const recs = listRecordSections(docText.split(/\r?\n/).slice(1).join("\n"))
   const nextNum = recs.length ? String(Math.max(...recs.map((r) => Number(r.num.split(".")[0]))) + 1) : "1"
   return [
     `【taskflow】你在处理任务「${meta.title}」（id: ${meta.id}，项目 ${meta.project}）。你本次的 session id 是 ${sessionId}。`,
     `任务文档路径：Windows「${meta.path}」；你的运行环境内「${vmPathNote(rules, meta.path)}」。`,
     "",
-    "文档结构（三段式）：frontmatter（tag/pha/sessions）→ 概览（待办 / 问题与解决）→",
-    "「记录」（线性分章节的详细过程，编号 1 / 1.1 / 1.1.1）。「备注」属于用户，禁止改写。",
+    "文档布局：frontmatter（tag/pha/sessions）→「待办」（任务 todo list）→ `---` 分隔线 →",
+    "**正文区**（编号章节 1 / 1.1 / 1.1.1，任务的方案/实施/验证/问题等实质内容）→ 置底「日志」表。",
     "",
     "可用工具（win-host MCP）——只能通过它们写文档，保证格式统一：",
-    `- task_write_section(id="${meta.id}", section, title, content, complete_todo?)：`,
-    "  【主力】向「记录」写一个编号章节：content 是自由 Markdown（表格/代码块均可）；",
-    "  同号章节会被更新；传 complete_todo 可同时勾掉对应待办，实现文档与概览同步。",
+    `- task_write_section(id="${meta.id}", section, title, content, mode?, complete_todo?)：`,
+    "  【正文唯一入口】写编号章节。mode=replace 整章重写（默认）/ append 章节末尾追加增量。",
+    "  content 里的 # 标题会被自动降级为粗体——层级只由章节号决定。",
     `  当前已有章节：${recs.length ? recs.map((r) => r.num).join(", ") : "（无）"}；新阶段从 ${nextNum} 开始，子步骤用 ${nextNum}.1、${nextNum}.2…`,
     `- task_todo(id="${meta.id}", action, text)：勾选/新增待办（action: check/uncheck/add）`,
-    `- task_issue(id="${meta.id}", problem, solution)：向「问题与解决」追加一条`,
-    `- task_log(id="${meta.id}", text, session="${sessionId}")：只记一句话时用（追加到「记录」末尾）`,
+    `- task_issue(id="${meta.id}", problem, cause?, solution)：问题+解决一次性记录（自动生成「问题」章节）`,
+    `- task_log(id="${meta.id}", text, session="${sessionId}")：底部日志表追加一行——只在阶段完成时记，不要流水账`,
     `- task_set_status(id="${meta.id}", column)：移动看板卡片（列见看板）`,
     `- task_set_field(id="${meta.id}", key, value)：更新 type/pha_issue 字段`,
     `- task_get(id="${meta.id}")：读文档全文；task_list()：看板全览`,
-    "（若这些工具不在你的工具列表里，就按上面的结构直接编辑任务文档，路径用「你的运行环境内」那个形态。）",
+    "（若这些工具不在你的工具列表里，就按上面的布局直接编辑任务文档，路径用「你的运行环境内」那个形态。）",
     "",
-    "规则：",
+    "写文档的硬规则（这份文档是给人复查的，不是过程日志）：",
     "1. 只做「待办」里列出的事。",
-    "2. 每完成一个阶段 → task_write_section 写一个编号章节（做了什么/怎么做的/结果，",
-    "   数据用表格），并用 complete_todo 勾掉对应待办——不要只丢一句话。",
-    "3. 遇到问题与解决办法 → task_issue 记录。",
-    "4. 不要改写「备注」；不要主动碰 PHA（同步由用户手动触发）。",
+    "2. 每完成一个阶段 → task_write_section 写一个编号章节 + complete_todo 勾掉对应待办",
+    "   + task_log 记一行。章节 = 结论先行、关键数据用表格、命令/清单用代码块、决策写理由。",
+    "3. **禁止**写入：探索过程的碎碎念、无结论的中间状态、与任务无关的边角信息、",
+    "   大段原始输出（截取关键行即可）。写之前自问：这段被删掉会有人惋惜吗？不会就别写。",
+    "4. 修改已有章节：同号 replace 整章重写；补充增量用 mode=append，别新开重复章节。",
+    "5. 不要主动碰 PHA（同步由用户手动触发）。",
     "",
     "## 当前任务文档",
     "```markdown",
@@ -887,7 +964,9 @@ const tools: McpToolDef[] = [
           isError: true,
         }
       }
-      const dir = /^[A-Za-z]:[\\/]/.test(dirArg) ? dirArg : join(conf.vaultDir, dirArg)
+      // 绝对路径 = 盘符 或 UNC（\\server\share / //server/share）；否则相对扫描根
+      const isAbs = /^[A-Za-z]:[\\/]/.test(dirArg) || /^(\\\\|\/\/)/.test(dirArg)
+      const dir = isAbs ? dirArg : join(conf.vaultDir, dirArg)
       if (!norm(dir).startsWith(norm(conf.vaultDir))) {
         return { text: `目录必须在扫描根目录内: ${conf.vaultDir}`, isError: true }
       }
@@ -959,26 +1038,36 @@ const tools: McpToolDef[] = [
   {
     name: "task_write_section",
     description:
-      "【记录文档的主力工具】向任务「记录」区写一个编号章节（线性过程记录）。" +
-      "section 是章节号（1 / 1.2 / 1.2.3，最多三级），同号章节会被更新（子章节保留）；" +
-      "title 是章节标题；content 是自由 Markdown 正文（表格、代码块、列表均可）。" +
-      "传 complete_todo（待办文本的包含匹配）可在写记录的同时勾掉概览区对应待办，保证文档与概览同步。" +
-      "章节结构（编号/层级/顺序）由工具控制，你只管内容。",
+      "【记录任务正文的唯一方式】向任务正文区（--- 分隔线之后）写一个编号章节。" +
+      "section 是章节号（1 / 1.2 / 1.2.3，最多三级；层级/排序由工具控制）；" +
+      "mode=replace（默认）同号章节整体重写（子章节保留），mode=append 在既有章节末尾追加增量内容。" +
+      "content 是 Markdown 正文（数据用表格、命令用代码块；里面的 # 标题会被自动降级为粗体——结构只能由工具产生）。" +
+      "只写有效信息：结论先行、关键数据、决策理由；过程性碎碎念留在会话里，不要进文档。" +
+      "传 complete_todo（待办文本包含匹配）可同时勾掉待办。",
     inputSchema: {
       type: "object",
       properties: {
         id: { type: "string" },
         section: { type: "string", description: "章节号，如 1、1.2、1.2.3（最多三级）" },
-        title: { type: "string", description: "章节标题" },
+        title: { type: "string", description: "章节标题（append 模式下留空=保持原标题）" },
         content: { type: "string", description: "章节正文（Markdown）" },
+        mode: { type: "string", enum: ["replace", "append"], description: "replace=整章重写(默认)；append=章节末尾追加" },
         complete_todo: { type: "string", description: "可选：同时勾掉的待办（文本包含匹配）" },
       },
-      required: ["id", "section", "title", "content"],
+      required: ["id", "section", "content"],
     },
     async handler(args, ctx) {
       const t = resolveTask(ctx, String(args.id ?? ""))
       if (!t) return { text: `task not found: ${args.id}`, isError: true }
-      const next = writeRecordSection(t.body, String(args.section ?? ""), String(args.title ?? ""), String(args.content ?? ""))
+      const content = String(args.content ?? "")
+      if (content.length > 6000) {
+        return {
+          text: `content 过长（${content.length} 字符 > 6000）。请精炼：只保留结论、关键数据（表格）与决策理由；细节过程不进文档。也可以拆成多个子章节分次写入。`,
+          isError: true,
+        }
+      }
+      const mode = args.mode === "append" ? "append" : "replace"
+      const next = writeRecordSection(t.body, String(args.section ?? ""), String(args.title ?? ""), content, mode)
       if (!next) return { text: `非法章节号：${args.section}（应为 1 / 1.2 / 1.2.3，最多三级）`, isError: true }
       let body = next
       let todoNote = ""
@@ -990,12 +1079,13 @@ const tools: McpToolDef[] = [
       }
       writeTask(t, t.fm, body)
       ctx.emit("taskflow:changed", { id: t.meta.id })
-      return { text: `ok: 章节 ${args.section} ${args.title} 已写入${todoNote}` }
+      return { text: `ok: 章节 ${args.section} 已${mode === "append" ? "追加" : "写入"}${todoNote}` }
     },
   },
   {
     name: "task_log",
-    description: "只记一句话时用：向「记录」区末尾追加一行（自动带时间戳）。成段的过程记录请用 task_write_section。",
+    description:
+      "向文档底部的「日志」表追加一行阶段性记录（时间|会话|记录）。只在阶段完成/状态变化时记一条，不要流水账。",
     inputSchema: {
       type: "object",
       properties: { id: { type: "string" }, text: { type: "string" }, session: { type: "string" } },
@@ -1006,10 +1096,9 @@ const tools: McpToolDef[] = [
       if (!t) return { text: `task not found: ${args.id}`, isError: true }
       const stamp = new Date().toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
       const sess = String(args.session ?? "").trim()
-      const line = `- ${stamp}${sess ? ` · ${sess.slice(-6)}` : ""} · ${String(args.text ?? "").trim().replace(/\s+/g, " ")}`
-      writeTask(t, t.fm, appendToSection(t.body, "记录", line))
+      writeTask(t, t.fm, appendLogRow(t.body, stamp, sess ? `…${sess.slice(-6)}` : "", String(args.text ?? "")))
       ctx.emit("taskflow:changed", { id: t.meta.id })
-      return { text: "ok: 已记录" }
+      return { text: "ok: 日志已记录" }
     },
   },
   {
@@ -1037,22 +1126,40 @@ const tools: McpToolDef[] = [
   },
   {
     name: "task_issue",
-    description: "向任务「问题与解决」区追加一条（problem/solution 两段式）。",
+    description:
+      "记录一个问题及其解决（task_write_section 的语法糖）：自动取下一个顶级章节号，" +
+      "生成固定结构的「问题」章节（现象/根因/解决）。适合遇到并解决问题后一次性记录。",
     inputSchema: {
       type: "object",
-      properties: { id: { type: "string" }, problem: { type: "string" }, solution: { type: "string" } },
+      properties: {
+        id: { type: "string" },
+        problem: { type: "string", description: "问题现象（一两句）" },
+        cause: { type: "string", description: "可选：根因" },
+        solution: { type: "string", description: "解决办法/结论" },
+      },
       required: ["id", "problem", "solution"],
     },
     async handler(args, ctx) {
       const t = resolveTask(ctx, String(args.id ?? ""))
       if (!t) return { text: `task not found: ${args.id}`, isError: true }
-      const entry = [
-        `- **问题**：${String(args.problem ?? "").trim()}`,
-        `  **解决**：${String(args.solution ?? "").trim()}`,
+      const tops = listRecordSections(t.body)
+        .map((s) => Number(s.num.split(".")[0]))
+        .filter((n) => Number.isFinite(n))
+      const nextNum = String((tops.length ? Math.max(...tops) : 0) + 1)
+      const problem = String(args.problem ?? "").trim()
+      const cause = String(args.cause ?? "").trim()
+      const content = [
+        `**现象**：${problem}`,
+        ...(cause ? ["", `**根因**：${cause}`] : []),
+        "",
+        `**解决**：${String(args.solution ?? "").trim()}`,
       ].join("\n")
-      writeTask(t, t.fm, appendToSection(t.body, "问题与解决", entry))
+      const title = `问题：${problem.slice(0, 24)}${problem.length > 24 ? "…" : ""}`
+      const next = writeRecordSection(t.body, nextNum, title, content)
+      if (!next) return { text: "internal: chapter write failed", isError: true }
+      writeTask(t, t.fm, next)
       ctx.emit("taskflow:changed", { id: t.meta.id })
-      return { text: "ok: 已记录问题与解决" }
+      return { text: `ok: 已记录为章节 ${nextNum}` }
     },
   },
   {
@@ -1081,7 +1188,8 @@ const tools: McpToolDef[] = [
   },
   {
     name: "task_normalize",
-    description: "非破坏性规范化一篇任务文档：补齐缺失的 frontmatter 字段与模板小节，不改动任何已有内容。",
+    description:
+      "非破坏性规范化一篇任务文档到 v5 布局：补齐缺失的 frontmatter 字段、待办小节、--- 分隔线、置底日志表。不改动任何已有内容。",
     inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
     async handler(args, ctx) {
       const t = resolveTask(ctx, String(args.id ?? ""))
@@ -1090,9 +1198,9 @@ const tools: McpToolDef[] = [
       for (const [k, dv] of Object.entries({ project: t.meta.project, type: "", sessions: [], pha_issue: "" })) {
         if (fm[k] === undefined) fm[k] = dv as string | string[]
       }
-      writeTask(t, fm, ensureSections(t.body))
+      writeTask(t, fm, ensureLayout(t.body))
       ctx.emit("taskflow:changed", { id: t.meta.id })
-      return { text: "ok: 已补齐 frontmatter 与小节（未改动原内容）" }
+      return { text: "ok: 已补齐 frontmatter 与 v5 布局（未改动原内容）" }
     },
   },
 ]
@@ -1133,6 +1241,24 @@ const routes: RouteDef[] = [
     async handler(_req, ctx) {
       refreshRegistry(ctx)
       return { body: { ok: true, count: reg.tasks.size } }
+    },
+  },
+  {
+    // Obsidian 插件启动时上报当前 vault 根目录 —— vaultDir 未手动配置时的默认值。
+    method: "POST",
+    path: "/vault",
+    async handler(req, ctx) {
+      const path = String(req.body?.path ?? "").trim()
+      if (path && existsSync(path)) {
+        const changed = reportedVaultDir !== path
+        reportedVaultDir = path
+        if (changed) {
+          ctx.log(`vault reported by obsidian: ${path}`)
+          refreshRegistry(ctx)
+          ctx.emit("taskflow:changed", {})
+        }
+      }
+      return { body: { ok: true, effective: cfg(ctx).vaultDir } }
     },
   },
   {
@@ -1223,15 +1349,8 @@ export const taskflowCapability: Capability = {
         key: "vaultDir",
         label: "扫描根目录",
         type: "string",
-        placeholder: "如 D:\\vault 或 D:\\vault\\01-项目资料",
-        help: "taskflow 会在此目录下递归查找 Obsidian Kanban 看板（含 kanban-plugin: board 的文件）；看板上 [[链接]] 到的文档即任务，放哪都行。",
-      },
-      {
-        key: "newTaskDir",
-        label: "新任务落点",
-        type: "string",
-        placeholder: "留空=扫描根目录/收件箱",
-        help: "task_create 新建任务文档的目录；你之后可随意移动（看板链接不受影响）。",
+        placeholder: "留空=自动用当前 Obsidian vault；支持 UNC 如 \\\\192.168.56.100\\share",
+        help: "taskflow 在此目录下递归查找 Obsidian Kanban 看板（含 kanban-plugin: board 的文件）；看板上 [[链接]] 到的文档即任务。留空时自动使用 Obsidian 插件上报的当前 vault 根目录。",
       },
       {
         key: "doneColumns",

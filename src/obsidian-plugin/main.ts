@@ -41,7 +41,10 @@ export default class WinHostPlugin extends Plugin {
     // daemon 判断是不是任务并广播 taskflow:focus，控制台据此浮出上下文条。
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.pushFocus()))
     this.registerEvent(this.app.workspace.on("file-open", () => this.pushFocus()))
-    this.app.workspace.onLayoutReady(() => this.pushFocus())
+    this.app.workspace.onLayoutReady(() => {
+      this.reportVault()
+      this.pushFocus()
+    })
 
     this.addSettingTab(new WinHostSettingTab(this.app, this))
   }
@@ -61,6 +64,19 @@ export default class WinHostPlugin extends Plugin {
     const adapter = this.app.vault.adapter
     if (adapter instanceof FileSystemAdapter) return adapter.getFullPath(file.path)
     return null
+  }
+
+  /** 上报当前 vault 根目录 —— daemon 侧 vaultDir 未手动配置时的默认扫描根。 */
+  private reportVault(): void {
+    const adapter = this.app.vault.adapter
+    if (!(adapter instanceof FileSystemAdapter)) return
+    void fetch(this.settings.winHostUrl.replace(/\/+$/, "") + "/cap/taskflow/vault", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: adapter.getBasePath() }),
+    }).catch(() => {
+      /* daemon down — best-effort */
+    })
   }
 
   private focusTimer?: ReturnType<typeof setTimeout>

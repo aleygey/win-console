@@ -749,10 +749,10 @@
   /* 0.95em (≈13.3px): the earlier 0.88em made `.hex`/`.srec`-style inline code
      read visibly smaller than the surrounding 14px prose */
   font-size: 0.95em;
-  /* TUI-style keyword tint: opencode's terminal renderer colors inline code
-     green — mirror that (theme-aware) instead of a gray chip. */
-  color: var(--text-on-success-base);
-  background: color-mix(in srgb, var(--surface-success-weak) 65%, transparent);
+  /* TUI 配色：行内代码 = 绿色关键字。深色下裸绿字无底色（正如终端）；
+     浅色下绿字 + 极淡底提高辨识。 */
+  color: light-dark(var(--text-on-success-base), #98c379);
+  background: light-dark(color-mix(in srgb, var(--surface-success-weak) 65%, transparent), transparent);
   padding: 1px 5px;
   border-radius: var(--radius-sm);
 }
@@ -809,8 +809,9 @@
 }
 .sess-modal .markdown strong {
   font-weight: var(--font-weight-semibold);
-  /* TUI bolds keywords in amber — same accent here, theme-aware. */
-  color: var(--text-on-warning-base);
+  /* TUI 配色：加粗关键词 = 柔和橙（深色下参考 opencode TUI 的 #d19a66 系，
+     不再用饱和琥珀跟绿色打架；浅色下保持深琥珀可读）。 */
+  color: light-dark(var(--text-on-warning-base), #d19a66);
 }
 .sess-modal .markdown pre code {
   /* keep code blocks neutral — the green tint is for inline keywords only */
@@ -1047,21 +1048,28 @@
   border-radius: var(--radius-md);
   padding: 4px 8px;
 }
+/* TUI 式：紧贴输入框上方的紧凑问答条 —— 左侧强调线 + 中性底，不再整块琥珀。 */
 .sess-ask {
   flex: none;
-  border-bottom: 1px solid var(--border-weaker-base, var(--border-weak-base));
-  background: var(--surface-warning-weak);
-  padding: 10px 14px;
+  margin: 0 14px 8px;
+  border: 1px solid var(--border-weak-base);
+  border-left: 3px solid light-dark(var(--text-on-warning-base), #d19a66);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  padding: 8px 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
 }
 .sess-ask-head {
   display: flex;
   align-items: center;
   gap: 7px;
-  color: var(--text-on-warning-base);
-  font-size: var(--font-size-small);
+  color: light-dark(var(--text-on-warning-base), #d19a66);
+  font-size: 12px;
+}
+.sess-ask-head b {
+  font-weight: var(--font-weight-medium);
 }
 .sess-ask-body {
   display: flex;

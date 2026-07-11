@@ -448,10 +448,6 @@ function SessionModal(props: { id: string; entry: () => ChatMonitorEntry | undef
               <span>模型调用失败,opencode 正在重试:{props.entry()!.stateDetail}</span>
             </div>
           </Show>
-          <Show when={props.entry()?.ask} keyed>
-            {(a) => <AskCard ask={a} onDone={async () => { try { setMsgs(await api.chat.history(props.id)) } catch {} }} />}
-          </Show>
-
           <div class="sess-log" ref={logEl}>
             <Show when={msgs().length > 0} fallback={<div class="sess-empty">加载会话历史…</div>}>
               <For each={msgs()}>
@@ -479,6 +475,11 @@ function SessionModal(props: { id: string; entry: () => ChatMonitorEntry | undef
               </Show>
             </Show>
           </div>
+
+          {/* pending ask/question — TUI 式：紧贴输入框上方，会话暂停时在这里作答 */}
+          <Show when={props.entry()?.ask} keyed>
+            {(a) => <AskCard ask={a} onDone={async () => { try { setMsgs(await api.chat.history(props.id)) } catch {} }} />}
+          </Show>
 
           {/* compose */}
           <div class="sess-compose">

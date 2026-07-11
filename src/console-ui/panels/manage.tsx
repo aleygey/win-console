@@ -308,7 +308,7 @@ function ManagePanel() {
                     <Show when={cap.tools.length > 0}>
                       <div class="mg-tools">
                         <span class="mg-tools-label">agent 工具</span>
-                        <For each={cap.tools}>{(t) => <span class="mg-tool">{t.name}</span>}</For>
+                        <For each={cap.tools}>{(t) => <span class="mg-tool" title={t.description}>{t.name}</span>}</For>
                       </div>
                     </Show>
 

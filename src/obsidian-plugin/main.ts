@@ -37,6 +37,14 @@ export default class WinHostPlugin extends Plugin {
     })
 
     this.subscribe()
+    // Kanban(Taskflow) fork 的卡片脚注点「打开会话/启动」时广播此事件：
+    // 激活控制台视图并深链到该会话的对话框。
+    const onOpenSession = (ev: Event) => {
+      const sid = (ev as CustomEvent).detail?.sessionId as string | undefined
+      if (sid) void this.activate(`sessions&session=${sid}`)
+    }
+    window.addEventListener("taskflow:open-session", onOpenSession)
+    this.register(() => window.removeEventListener("taskflow:open-session", onOpenSession))
     // taskflow 焦点联动：切换当前文档 → 告诉 daemon 当前活动文件的绝对路径，
     // daemon 判断是不是任务并广播 taskflow:focus，控制台据此浮出上下文条。
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.pushFocus()))

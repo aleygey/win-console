@@ -201,6 +201,25 @@ function cmpSecNum(a: number[], b: number[]): number {
   return 0
 }
 
+/** content 消毒：正文里的 markdown 标题会破坏章节解析边界（`##` 会截断
+ *  「记录」区、伪编号标题会污染章节索引）——统一降级为粗体行。代码块内不动。
+ *  这就是"结构只能由工具产生"的强制执行点。 */
+export function sanitizeSectionContent(content: string): string {
+  const out: string[] = []
+  let inFence = false
+  for (const ln of content.split(/\r?\n/)) {
+    if (/^\s*(```|~~~)/.test(ln)) {
+      inFence = !inFence
+      out.push(ln)
+      continue
+    }
+    const h = !inFence && /^\s*#{1,6}\s+(.*)$/.exec(ln)
+    if (h) out.push(`**${h[1].trim()}**`)
+    else out.push(ln)
+  }
+  return out.join("\n")
+}
+
 /** 在「记录」区写入/替换一个编号章节。
  *  - 已存在同号章节 → 替换其标题与正文（保留其子章节——只替换到下一个编号标题为止）；
  *  - 不存在 → 按编号顺序插入正确位置；
@@ -224,7 +243,7 @@ export function writeRecordSection(body: string, section: string, title: string,
   }
 
   const newHeading = `${"#".repeat(2 + num.length)} ${section} ${title.trim()}`
-  const newBlock = [newHeading, "", content.replace(/\s+$/, ""), ""]
+  const newBlock = [newHeading, "", sanitizeSectionContent(content).replace(/\s+$/, ""), ""]
 
   const existing = heads.find((h) => cmpSecNum(h.num, num) === 0)
   if (existing) {

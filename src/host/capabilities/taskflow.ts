@@ -130,6 +130,16 @@ function sectionRange(lines: string[], heading: string): { headIdx: number; star
   return { headIdx, start: headIdx + 1, end }
 }
 
+/** 行扫描：找第一个「围栏外」满足条件的行号；无 → -1。 */
+function findLineOutsideFence(lines: string[], pred: (trimmed: string) => boolean): number {
+  const fence = fenceTracker()
+  for (let i = 0; i < lines.length; i++) {
+    if (fence.feed(lines[i]) || fence.inFence()) continue
+    if (pred(lines[i].trim())) return i
+  }
+  return -1
+}
+
 /** 非破坏性补齐 v5 布局：待办、`---` 分隔线、置底的日志表。已有内容不动。 */
 export function ensureLayout(body: string): string {
   let out = body
@@ -141,26 +151,41 @@ export function ensureLayout(body: string): string {
     lines = [...lines.slice(0, at), "", "## 待办", "", ...lines.slice(at)]
     out = lines.join("\n")
   }
-  if (!out.split(/\r?\n/).some((l) => l.trim() === "---")) {
-    out = out.replace(/\s*$/, "") + "\n\n---\n"
+  lines = out.split(/\r?\n/)
+  if (findLineOutsideFence(lines, (t) => t === "---") < 0) {
+    // 缺状态区分隔线：日志已存在时插到日志之前（正文区必须在日志上方），否则贴文末
+    const logAt = findLineOutsideFence(lines, (t) => t === LOG_HEADING)
+    if (logAt >= 0) {
+      let p = logAt
+      while (p > 0 && lines[p - 1].trim() === "") p--
+      out = [...lines.slice(0, p), "", "---", "", ...lines.slice(logAt)].join("\n")
+    } else {
+      out = out.replace(/\s*$/, "") + "\n\n---\n"
+    }
   }
-  if (!out.split(/\r?\n/).some((l) => l.trim() === LOG_HEADING)) {
+  lines = out.split(/\r?\n/)
+  if (findLineOutsideFence(lines, (t) => t === LOG_HEADING) < 0) {
     out = out.replace(/\s*$/, "") + `\n\n${LOG_HEADING}\n\n${LOG_TABLE_HEADER.join("\n")}\n`
   }
   return out
 }
 
-/** 正文区（章节区）的行范围：第一条 `---` 之后，`## 日志` 之前。 */
+/** 正文区（章节区）的行范围：第一条 `---` 之后，`## 日志` 之前。
+ *  两个边界都只认代码围栏之外的行——章内代码块里的 `---`/`## 日志` 是字面量。 */
 function chapterZone(lines: string[]): { start: number; end: number } {
   let start = 0
+  const f1 = fenceTracker()
   for (let i = 0; i < lines.length; i++) {
+    if (f1.feed(lines[i]) || f1.inFence()) continue
     if (lines[i].trim() === "---") {
       start = i + 1
       break
     }
   }
   let end = lines.length
+  const f2 = fenceTracker()
   for (let i = start; i < lines.length; i++) {
+    if (f2.feed(lines[i]) || f2.inFence()) continue
     if (lines[i].trim() === LOG_HEADING) {
       end = i
       break
@@ -239,32 +264,146 @@ function cmpSecNum(a: number[], b: number[]): number {
   return 0
 }
 
+/** 代码围栏追踪器：``` 与 ~~~ 分开配对——``` 块内的 ~~~ 行是字面量，不翻转状态。 */
+function fenceTracker(): { feed(line: string): boolean; inFence(): boolean; openMark(): string | null } {
+  let open: string | null = null
+  return {
+    /** 喂一行；若该行本身是围栏边界行返回 true。 */
+    feed(line: string): boolean {
+      const m = /^\s*(```|~~~)/.exec(line)
+      if (!m) return false
+      if (open === null) open = m[1]
+      else if (open === m[1]) open = null
+      else return false // 另一种围栏出现在块内 = 字面量
+      return true
+    },
+    inFence: () => open !== null,
+    openMark: () => open,
+  }
+}
+
 /** content 消毒：正文里的 markdown 标题会破坏章节解析边界（`##` 会截断
  *  「记录」区、伪编号标题会污染章节索引）——统一降级为粗体行。代码块内不动。
+ *  未闭合的围栏自动补一行闭合——否则落盘后毒化整篇文档的章节扫描。
  *  这就是"结构只能由工具产生"的强制执行点。 */
 export function sanitizeSectionContent(content: string): string {
   const out: string[] = []
-  let inFence = false
+  const fence = fenceTracker()
   for (const ln of content.split(/\r?\n/)) {
-    if (/^\s*(```|~~~)/.test(ln)) {
-      inFence = !inFence
+    if (fence.feed(ln)) {
       out.push(ln)
       continue
     }
-    const h = !inFence && /^\s*#{1,6}\s+(.*)$/.exec(ln)
+    const h = !fence.inFence() && /^\s*#{1,6}\s+(.*)$/.exec(ln)
     if (h) out.push(`**${h[1].trim()}**`)
     else out.push(ln)
   }
+  if (fence.inFence()) out.push(fence.openMark()!)
   return out.join("\n")
+}
+
+/** content 结构化（v5.1）：把 content 里的 markdown 标题按相对层级映射成本章的
+ *  编号小节——章(## N)内：第一级→### N.i、第二级→#### N.i.j、更深→粗体；
+ *  小节(### N.M)内：第一级→#### N.M.j、更深→粗体；小小节(#### N.M.K)内全部粗体。
+ *  标题原有的纯数字编号（"1."、"2.3"）剥掉换成工具分配的号；名字与内容不动。
+ *  第一个一级标题之前出现的更深标题降为粗体（无处挂编号）。代码块内一律不动。
+ *  childStart：一级小节起始编号（append 续号用）。 */
+export function restructureSectionContent(content: string, parent: number[], childStart = 1): string {
+  const depthAvail = 3 - parent.length // 章下还能挂几层编号小节
+  if (depthAvail <= 0) return sanitizeSectionContent(content)
+
+  type Ln = { raw: string; level?: number; name?: string }
+  const parsed: Ln[] = []
+  const fence = fenceTracker()
+  const levels = new Set<number>()
+  for (const raw of content.split(/\r?\n/)) {
+    if (fence.feed(raw)) {
+      parsed.push({ raw })
+      continue
+    }
+    const h = !fence.inFence() && /^\s*(#{1,6})\s+(.*)$/.exec(raw)
+    if (h) {
+      // 剥掉标题自带的编号（"1. 名字"/"2.3 名字"）——编号由工具统一分配。
+      // 裸数字+空格（"2 号机测试"）不剥：那可能就是名字本身。
+      const name = h[2].trim().replace(/^(\d+(\.\d+)+|\d+[.、．])\s*/, "")
+      parsed.push({ raw, level: h[1].length, name })
+      levels.add(h[1].length)
+    } else parsed.push({ raw })
+  }
+  const tailClose = fence.inFence() ? [fence.openMark()!] : []
+  if (levels.size === 0) return [...content.replace(/\s+$/, "").split(/\r?\n/), ...tailClose].join("\n")
+
+  // 相对层级：content 里出现的最浅标题=第一级，次浅=第二级，更深=第三级+
+  const sorted = [...levels].sort((a, b) => a - b)
+  const relOf = (lv: number) => sorted.indexOf(lv) + 1
+
+  const out: string[] = []
+  let i = childStart - 1 // 一级小节计数（输出前自增）
+  let j = 0 //             二级小节计数（每个一级下重置）
+  for (const ln of parsed) {
+    if (ln.level === undefined) {
+      out.push(ln.raw)
+      continue
+    }
+    const rel = relOf(ln.level)
+    if (rel === 1 && depthAvail >= 1) {
+      i++
+      j = 0
+      out.push(`${"#".repeat(2 + parent.length)} ${[...parent, i].join(".")} ${ln.name}`)
+    } else if (rel === 2 && depthAvail >= 2 && i >= childStart) {
+      j++
+      out.push(`${"#".repeat(3 + parent.length)} ${[...parent, i, j].join(".")} ${ln.name}`)
+    } else {
+      out.push(`**${ln.name}**`)
+    }
+  }
+  out.push(...tailClose)
+  return out.join("\n").replace(/\s+$/, "")
 }
 
 const CHAPTER_RE = /^(#{2,4})\s+(\d+(?:\.\d+){0,2})\s+(.*)$/
 
-/** 在正文区（`---` 与「## 日志」之间）写一个编号章节。
- *  - mode="replace"（默认）：同号章节整体重写（子章节保留——替换只到下一个编号标题）；
- *  - mode="append"：同号章节存在时在其正文末尾追加（增量记录，不动已有内容）；
+/** 正文区里扫编号章节标题（fence 内不算——bash 注释「## 2 xxx」不是章节）。 */
+function scanChapterHeads(lines: string[], zone: { start: number; end: number }): Array<{ line: number; num: number[] }> {
+  const heads: Array<{ line: number; num: number[] }> = []
+  const fence = fenceTracker()
+  for (let i = zone.start; i < zone.end; i++) {
+    if (fence.feed(lines[i]) || fence.inFence()) continue
+    const m = CHAPTER_RE.exec(lines[i])
+    if (m) {
+      const n = parseSecNum(m[2])
+      if (n) heads.push({ line: i, num: n })
+    }
+  }
+  return heads
+}
+
+/** 顶级章之间补 `---` 分隔线（章更清晰）：每个 ## N（正文区里第一个除外）前面，
+ *  隔空行处若没有 `---` 就插一条。只加不删——章内 agent 自己写的水平线不动。幂等。 */
+export function ensureChapterSeparators(body: string): string {
+  const lines = body.split(/\r?\n/)
+  const zone = chapterZone(lines)
+  const tops = scanChapterHeads(lines, zone).filter((h) => h.num.length === 1)
+  // 从后往前插，行号不失效
+  for (let t = tops.length - 1; t >= 1; t--) {
+    const at = tops[t].line
+    let p = at - 1
+    while (p >= zone.start && lines[p].trim() === "") p--
+    if (p >= zone.start && lines[p].trim() === "---") continue
+    lines.splice(at, 0, "", "---", "")
+  }
+  return lines.join("\n")
+}
+
+/** 在正文区（`---` 与「## 日志」之间）写一个编号章节（v5.1）。
+ *  - content 里的 markdown 标题自动编号成本章的小节（### N.i / #### N.i.j，
+ *    更深→粗体）——agent 直接按习惯写标题即可，结构由工具规范；
+ *  - mode="replace"（默认）：content 不含标题 → 只重写本章导语（已有编号子节保留）；
+ *    content 含标题 → 整章连子节一起重写（新小节从 1 重新编号）；
+ *  - mode="append"：追加到本章末尾，content 里的标题接着已有小节续号；
  *  - 不存在 → 按编号顺序插入正确位置；
- *  - 标题深度：1→##、1.1→###、1.1.1→####（Obsidian 大纲友好）。 */
+ *  - 标题深度：1→##、1.1→###、1.1.1→####（Obsidian 大纲友好）；
+ *  - 写完自动补顶级章之间的 `---` 分隔线。 */
 export function writeRecordSection(
   body: string,
   section: string,
@@ -277,30 +416,52 @@ export function writeRecordSection(
   const withLayout = ensureLayout(body)
   const lines = withLayout.split(/\r?\n/)
   const zone = chapterZone(lines)
+  const heads = scanChapterHeads(lines, zone)
 
-  type Found = { line: number; num: number[] }
-  const heads: Found[] = []
-  for (let i = zone.start; i < zone.end; i++) {
-    const m = CHAPTER_RE.exec(lines[i])
-    if (m) {
-      const n = parseSecNum(m[2])
-      if (n) heads.push({ line: i, num: n })
-    }
-  }
-
-  const clean = sanitizeSectionContent(content).replace(/\s+$/, "")
   const newHeading = `${"#".repeat(1 + num.length)} ${section} ${title.trim()}`
   const existing = heads.find((h) => cmpSecNum(h.num, num) === 0)
+  const isChildOf = (h: { num: number[] }) => h.num.length > num.length && num.every((x, k) => h.num[k] === x)
+  // content 里是否有会变成编号小节的标题（fence 外）——决定 replace 的替换范围
+  const contentHasHeads = (() => {
+    if (3 - num.length <= 0) return false
+    const fence = fenceTracker()
+    for (const ln of content.split(/\r?\n/)) {
+      if (fence.feed(ln) || fence.inFence()) continue
+      if (/^\s*#{1,6}\s+/.test(ln)) return true
+    }
+    return false
+  })()
+  // 插入点回退：越过空行 + 顶级章之间的 `---` 分隔线（分隔线归章界所有，
+  // 内容必须插在它之前——否则分隔线被卷进章内逐次累积）
+  const backOff = (at: number, floor: number): number => {
+    let p = at
+    while (p > floor && lines[p - 1].trim() === "") p--
+    if (p > floor && lines[p - 1].trim() === "---") {
+      p--
+      while (p > floor && lines[p - 1].trim() === "") p--
+    }
+    return p
+  }
 
+  let out: string[] | null = null
   if (existing) {
     const idx = heads.indexOf(existing)
-    const end = idx + 1 < heads.length ? heads[idx + 1].line : zone.end
+    // 本章已有编号子节的最大一级子号（append 续号的起点）
+    const children = heads.filter((h) => h.num.length === num.length + 1 && isChildOf(h))
+    const maxChild = children.reduce((m, h) => Math.max(m, h.num[num.length]), 0)
     if (mode === "append") {
-      // 追加到该章节自己的正文末尾（下一个编号标题之前），标题保持原样（title 非空则更新）
-      let at = end
-      while (at > existing.line + 1 && lines[at - 1].trim() === "") at--
+      // 追加到整章（含子节）末尾；content 标题续号
+      let end = zone.end
+      for (let k = idx + 1; k < heads.length; k++) {
+        if (!isChildOf(heads[k])) {
+          end = heads[k].line
+          break
+        }
+      }
+      const clean = restructureSectionContent(content, num, maxChild + 1)
+      const at = backOff(end, existing.line + 1)
       const head = title.trim() ? newHeading : lines[existing.line]
-      return [
+      out = [
         ...lines.slice(0, existing.line),
         head,
         ...lines.slice(existing.line + 1, at),
@@ -308,17 +469,38 @@ export function writeRecordSection(
         clean,
         "",
         ...lines.slice(end),
-      ].join("\n")
+      ]
+    } else if (contentHasHeads) {
+      // replace 且 content 自带小节 → 整章（含旧子节）重写，避免新旧小节重号并存
+      let end = zone.end
+      for (let k = idx + 1; k < heads.length; k++) {
+        if (!isChildOf(heads[k])) {
+          end = heads[k].line
+          break
+        }
+      }
+      const clean = restructureSectionContent(content, num, 1)
+      out = [...lines.slice(0, existing.line), newHeading, "", clean, "", ...lines.slice(end)]
+    } else {
+      // replace 纯文本 → 只重写本章导语（到下一个编号标题为止，子节保留）
+      const end = idx + 1 < heads.length ? heads[idx + 1].line : zone.end
+      const clean = restructureSectionContent(content, num, maxChild + 1)
+      out = [...lines.slice(0, existing.line), newHeading, "", clean, "", ...lines.slice(end)]
     }
-    // replace：从标题到下一个编号标题之前整体重写（任意层级的下个标题=子章节也保留在后面）
-    return [...lines.slice(0, existing.line), newHeading, "", clean, "", ...lines.slice(end)].join("\n")
+  } else {
+    // 新章节：插到第一个编号更大的标题之前；否则正文区末尾（日志之前）
+    const clean = restructureSectionContent(content, num, 1)
+    const after = heads.find((h) => cmpSecNum(h.num, num) > 0)
+    let at = after ? after.line : zone.end
+    if (!after) {
+      while (at > zone.start && lines[at - 1].trim() === "") at--
+    }
+    // 尾部空行块不带进输出（否则每写一章多攒一行空行）
+    const tail = lines.slice(at)
+    while (tail.length && tail[0].trim() === "" && !after) tail.shift()
+    out = [...lines.slice(0, at), newHeading, "", clean, "", ...tail]
   }
-
-  // 新章节：插到第一个编号更大的标题之前；否则正文区末尾（日志之前）
-  const after = heads.find((h) => cmpSecNum(h.num, num) > 0)
-  let at = after ? after.line : zone.end
-  while (at > zone.start && lines[at - 1].trim() === "" && !after) at--
-  return [...lines.slice(0, at), newHeading, "", clean, "", ...lines.slice(at)].join("\n")
+  return ensureChapterSeparators(out.join("\n"))
 }
 
 /** 列出正文区现有章节（给 task_list/契约用，agent 据此知道下一个编号）。 */
@@ -326,9 +508,9 @@ export function listRecordSections(body: string): Array<{ num: string; title: st
   const lines = body.split(/\r?\n/)
   const zone = chapterZone(lines)
   const out: Array<{ num: string; title: string }> = []
-  for (let i = zone.start; i < zone.end; i++) {
-    const m = CHAPTER_RE.exec(lines[i])
-    if (m) out.push({ num: m[2], title: m[3].trim() })
+  for (const h of scanChapterHeads(lines, zone)) {
+    const m = CHAPTER_RE.exec(lines[h.line])!
+    out.push({ num: m[2], title: m[3].trim() })
   }
   return out
 }
@@ -809,8 +991,10 @@ function launchContract(meta: TaskMeta, sessionId: string, docText: string, rule
     "可用工具（win-host MCP）——只能通过它们写文档，保证格式统一：",
     `- task_write_section(id="${meta.id}", section, title, content, mode?, complete_todo?)：`,
     "  【正文唯一入口】写编号章节。mode=replace 整章重写（默认）/ append 章节末尾追加增量。",
-    "  content 里的 # 标题会被自动降级为粗体——层级只由章节号决定。",
-    `  当前已有章节：${recs.length ? recs.map((r) => r.num).join(", ") : "（无）"}；新阶段从 ${nextNum} 开始，子步骤用 ${nextNum}.1、${nextNum}.2…`,
+    "  content 里可以直接按习惯写 markdown 小节标题（## / ### 均可）——工具会自动把它们",
+    "  规范成本章的编号小节（### N.1、#### N.1.1，更深层级降为粗体），小节名和内容随你定。",
+    "  注意：replace 时 content 带标题 = 整章连旧小节一起重写；append 的新小节自动续号。",
+    `  当前已有章节：${recs.length ? recs.map((r) => r.num).join(", ") : "（无）"}；新阶段从 ${nextNum} 开始。`,
     `- task_todo(id="${meta.id}", action, text)：勾选/新增待办（action: check/uncheck/add）`,
     `- task_issue(id="${meta.id}", problem, cause?, solution)：问题+解决一次性记录（自动生成「问题」章节）`,
     `- task_log(id="${meta.id}", text, session="${sessionId}")：底部日志表追加一行——只在阶段完成时记，不要流水账`,
@@ -1069,9 +1253,11 @@ const tools: McpToolDef[] = [
     name: "task_write_section",
     description:
       "【记录任务正文的唯一方式】向任务正文区（--- 分隔线之后）写一个编号章节。" +
-      "section 是章节号（1 / 1.2 / 1.2.3，最多三级；层级/排序由工具控制）；" +
-      "mode=replace（默认）同号章节整体重写（子章节保留），mode=append 在既有章节末尾追加增量内容。" +
-      "content 是 Markdown 正文（数据用表格、命令用代码块；里面的 # 标题会被自动降级为粗体——结构只能由工具产生）。" +
+      "section 是章节号（1 / 1.2 / 1.2.3，最多三级；层级/排序/编号由工具控制）。" +
+      "content 是 Markdown 正文：可以直接按习惯写小节标题（## / ### 均可）——工具会自动把它们规范成本章的编号小节" +
+      "（### N.1、#### N.1.1，更深层级降为粗体），小节名字和内容随你定；数据用表格、命令用代码块。" +
+      "mode=replace（默认）：content 不含标题=只重写本章导语（已有编号子节保留）；含标题=整章连子节一起重写。" +
+      "mode=append：在本章末尾追加增量，content 里的小节自动接着已有编号续号。" +
       "只写有效信息：结论先行、关键数据、决策理由；过程性碎碎念留在会话里，不要进文档。" +
       "传 complete_todo（待办文本包含匹配）可同时勾掉待办。",
     inputSchema: {
@@ -1219,7 +1405,7 @@ const tools: McpToolDef[] = [
   {
     name: "task_normalize",
     description:
-      "非破坏性规范化一篇任务文档到 v5 布局：补齐缺失的 frontmatter 字段、待办小节、--- 分隔线、置底日志表。不改动任何已有内容。",
+      "非破坏性规范化一篇任务文档到 v5 布局：补齐缺失的 frontmatter 字段、待办小节、--- 分隔线、顶级章之间的分隔线、置底日志表。不改动任何已有内容。",
     inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
     async handler(args, ctx) {
       const t = resolveTask(ctx, String(args.id ?? ""))
@@ -1228,7 +1414,7 @@ const tools: McpToolDef[] = [
       for (const [k, dv] of Object.entries({ project: t.meta.project, type: "", sessions: [], pha_issue: "" })) {
         if (fm[k] === undefined) fm[k] = dv as string | string[]
       }
-      writeTask(t, fm, ensureLayout(t.body))
+      writeTask(t, fm, ensureChapterSeparators(ensureLayout(t.body)))
       ctx.emit("taskflow:changed", { id: t.meta.id })
       return { text: "ok: 已补齐 frontmatter 与 v5 布局（未改动原内容）" }
     },

@@ -109,9 +109,23 @@ type RetrieveLogEntry = {
   duration_ms: number
   created_at: number
   llm_trace?: LlmTrace
+  /** 列表接口默认剥离 llm_trace（体积大头），置此标记；详情开调试时按需拉单条全量 */
+  has_trace?: boolean
 }
 
-type LogResponse = { entries: RetrieveLogEntry[] }
+type LogResponse = { entries: RetrieveLogEntry[]; total?: number }
+
+/** GET /retrieve/session-state —— 会话当前已注入集合（内存态，只增不减） */
+type SessionStateRes =
+  | { active: false; session_id: string }
+  | {
+      active: true
+      session_id: string
+      turn_index: number
+      baseline: PickedExperience[]
+      topical: PickedExperience[]
+      last_injected: string[]
+    }
 
 /** POST /retrieve/preview response = RetrieveResult + a couple of echoed fields. */
 type RetrievePreview = {
@@ -264,12 +278,33 @@ export function Retrieve(): JSX.Element {
   const [showConfig, setShowConfig] = createSignal(false)
   const [showPreview, setShowPreview] = createSignal(false)
 
-  // The audit log. `client.get` throws on non-2xx, so createResource surfaces
-  // the error in `log.error` and we render a retry affordance.
-  const [log, { refetch }] = createResource(async () => {
-    const res = await client.get<LogResponse>("/retrieve/log?limit=200")
-    return res?.entries ?? []
-  })
+  // The audit log — paged (offset/limit)。日志文件只增不减，一次全量拉会越来越慢，
+  // 这里首屏拉一页，底部「加载更多」翻页；列表响应已剥离 llm_trace。
+  const PAGE = 60
+  const [raw, setRaw] = createSignal<RetrieveLogEntry[]>([])
+  const [total, setTotal] = createSignal<number | undefined>()
+  const [loading, setLoading] = createSignal(false)
+  const [loadErr, setLoadErr] = createSignal<string | undefined>()
+
+  async function load(reset = false): Promise<void> {
+    setLoading(true)
+    setLoadErr(undefined)
+    try {
+      const offset = reset ? 0 : raw().length
+      const res = await client.get<LogResponse>(`/retrieve/log?limit=${PAGE}&offset=${offset}`)
+      const fresh = res?.entries ?? []
+      setRaw((cur) => (reset ? fresh : [...cur, ...fresh]))
+      if (typeof res?.total === "number") setTotal(res.total)
+    } catch (e) {
+      setLoadErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }
+  onMount(() => void load(true))
+  const log = () => raw()
+  const hasMore = () => (total() !== undefined ? raw().length < (total() ?? 0) : raw().length > 0 && raw().length % PAGE === 0)
+  const refetch = () => void load(true)
 
   // Distinct sessions (most-recent first) for the picker — each with a recall
   // count and its latest query excerpt as a human-readable hint.
@@ -343,11 +378,18 @@ export function Retrieve(): JSX.Element {
             type="button"
             class="rt-refresh"
             onClick={() => refetch()}
-            disabled={log.loading}
+            disabled={loading()}
             title="刷新召回记录"
           >
-            {log.loading ? "…" : "↻"}
+            {loading() ? "…" : "↻"}
           </button>
+        </div>
+
+        {/* 触发机制一句话 —— 回答「为什么一个 query 会有多条记录」 */}
+        <div class="rt-mech">
+          每条记录 = 一次召回触发：<b>用户消息</b>（每条都触发，结果下一轮生效）、
+          <b>工具活动观察</b>（agent 每累计 ≥5 次工具调用且距上次 ≥15s，按工作内容主动召回）、
+          <b>基线</b>（会话首轮注入工作区规则）。会话内已注入集合只增不减。
         </div>
 
         <Show when={sessions().length > 0}>
@@ -382,13 +424,13 @@ export function Retrieve(): JSX.Element {
 
         <div class="rt-timeline-body">
           <Switch>
-            <Match when={log.loading && entries().length === 0}>
+            <Match when={loading() && entries().length === 0}>
               <div class="rt-state">加载中…</div>
             </Match>
-            <Match when={log.error}>
+            <Match when={loadErr() && entries().length === 0}>
               <div class="rt-state rt-state-err">
                 <span>加载失败</span>
-                <span class="rt-state-detail">{String(log.error?.message ?? log.error)}</span>
+                <span class="rt-state-detail">{loadErr()}</span>
                 <button type="button" class="rt-retry" onClick={() => refetch()}>
                   重试
                 </button>
@@ -419,13 +461,22 @@ export function Retrieve(): JSX.Element {
                   </section>
                 )}
               </For>
+              <Show when={hasMore()}>
+                <button type="button" class="rt-more" disabled={loading()} onClick={() => void load()}>
+                  {loading() ? "加载中…" : `加载更多${total() !== undefined ? `（${raw().length}/${total()}）` : ""}`}
+                </button>
+              </Show>
             </Match>
           </Switch>
         </div>
       </aside>
 
-      {/* ── Right: detail (config / preview demoted to toolbar buttons) ── */}
+      {/* ── Bottom: detail (config / preview demoted to toolbar buttons) ── */}
       <main class="rt-detail">
+        {/* 选中会话时：该会话当前累计已注入的经验（只增不减的全集，区别于下面单次触发的增量） */}
+        <Show when={sessionFilter()} keyed>
+          {(sid) => <SessionSnapshot sessionId={sid} entries={raw()} />}
+        </Show>
         <div class="rt-detail-bar">
           <span class="rt-detail-bar-title">召回详情</span>
           <Show when={active()}>
@@ -566,16 +617,89 @@ function TimelineRow(props: {
 }
 
 /* ──────────────────────────────────────────────────────
-   Detail — right column for the selected log entry
+   SessionSnapshot — 选中会话时的「当前已注入」全集条
+   ────────────────────────────────────────────────────── */
+
+function SessionSnapshot(props: { sessionId: string; entries: RetrieveLogEntry[] }): JSX.Element {
+  const client = useExpClient()
+  const [snap] = createResource(
+    () => props.sessionId,
+    async (sid) => {
+      try {
+        return await client.get<SessionStateRes>(`/retrieve/session-state?session_id=${encodeURIComponent(sid)}`)
+      } catch {
+        return undefined
+      }
+    },
+  )
+  const live = () => {
+    const s = snap()
+    return s && s.active ? s : undefined
+  }
+  // 引擎重启后内存态为空 —— 集合只增不减，∪(已加载日志的 picked) 即近似当前集合
+  const picks = createMemo<PickedExperience[]>(() => {
+    const s = live()
+    if (s) return [...s.baseline, ...s.topical]
+    const seen = new Map<string, PickedExperience>()
+    for (const e of props.entries) {
+      if (e.session_id !== props.sessionId) continue
+      for (const p of e.picked) if (!seen.has(p.experience_id)) seen.set(p.experience_id, p)
+    }
+    return [...seen.values()]
+  })
+  return (
+    <section class="rt-snap">
+      <div class="rt-snap-hd">
+        <span class="rt-snap-title">该会话当前已注入</span>
+        <span class="rt-snap-count">{picks().length}</span>
+        <Show when={live()}>
+          <span class="rt-snap-meta">
+            基线 {live()!.baseline.length} + 累计召回 {live()!.topical.length} · turn {live()!.turn_index}
+          </span>
+        </Show>
+        <Show when={!live() && snap() !== undefined}>
+          <span class="rt-snap-meta">引擎内存态已清（重启/压缩），由日志重建</span>
+        </Show>
+      </div>
+      <Show when={picks().length > 0} fallback={<div class="rt-sec-empty">该会话还没有注入任何经验。</div>}>
+        <div class="rt-snap-chips">
+          <For each={picks()}>
+            {(p) => (
+              <span class="rt-snap-chip" title={`${p.title}\n${p.abstract || p.statement || ""}`}>
+                <span class="rt-pick-dot" data-kind={p.kind} />
+                {p.title}
+              </span>
+            )}
+          </For>
+        </div>
+      </Show>
+    </section>
+  )
+}
+
+/* ──────────────────────────────────────────────────────
+   Detail — the selected log entry (bottom pane)
    ────────────────────────────────────────────────────── */
 
 function Detail(props: { entry: RetrieveLogEntry }): JSX.Element {
+  const client = useExpClient()
   const e = () => props.entry
   // 调试信息 toggle — OFF by default; trace / diff folds render only when on.
   const [debug, setDebug] = createSignal(false)
-  const tr = () => e().llm_trace
+  // 列表接口剥离了 llm_trace（has_trace 标记代替）——开调试时按需拉单条全量
+  const [fetchedTrace, setFetchedTrace] = createSignal<LlmTrace | undefined>()
+  createEffect(() => {
+    const cur = e()
+    setFetchedTrace(undefined)
+    if (!debug() || cur.llm_trace || !cur.has_trace) return
+    void client
+      .get<{ entry?: RetrieveLogEntry }>(`/retrieve/log-entry?id=${encodeURIComponent(cur.id)}`)
+      .then((r) => setFetchedTrace(r?.entry?.llm_trace))
+      .catch(() => {})
+  })
+  const tr = () => e().llm_trace ?? fetchedTrace()
   const hasDiff = () => diffTotal(e().diff) > 0
-  const hasDebug = () => Boolean(tr()) || hasDiff()
+  const hasDebug = () => Boolean(tr()) || e().has_trace === true || hasDiff()
   return (
     <article class="rt-card">
       {/* Query / trigger header */}
@@ -607,12 +731,13 @@ function Detail(props: { entry: RetrieveLogEntry }): JSX.Element {
           kind dot + title, a gray abstract line, and a recall-method tag. */}
       <section class="rt-sec">
         <div class="rt-sec-hd">
-          <span class="rt-sec-title">注入的经验</span>
+          <span class="rt-sec-title">本次召回命中</span>
           <span class="rt-sec-count">{e().picked.length}</span>
+          <span class="rt-sec-hint">该次触发新增/命中的经验；会话累计全集见上方（选中会话后显示）</span>
         </div>
         <Show
           when={e().picked.length > 0}
-          fallback={<div class="rt-sec-empty">该轮没有注入任何经验。</div>}
+          fallback={<div class="rt-sec-empty">该次触发没有命中新的经验（已注入集合保持不变）。</div>}
         >
           <div class="rt-picks rt-picks-flat">
             <For each={e().picked}>

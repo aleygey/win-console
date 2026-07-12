@@ -95,6 +95,8 @@ export function createChat(getConfig: () => GlobalConfig): ChatBackend {
       const res = await c().session.list({ query: dir() })
       const list = (res.data ?? []) as any[]
       return list
+        // Task 工具派生的 subagent 会话带 parentID —— 监控/侧栏只看主会话
+        .filter((s) => !s.parentID)
         .map((s) => ({
           id: s.id as string,
           title: (s.title as string) || "(未命名会话)",

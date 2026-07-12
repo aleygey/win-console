@@ -50,7 +50,9 @@ function buildGroups(entries: ChatMonitorEntry[]): Group[] {
     if (e.busy || e.state === "retry" || e.ask) active.push(e)
     else rest.push(e)
   }
-  active.sort((a, b) => statusOf(a).rank - statusOf(b).rank || b.updatedAt - a.updatedAt)
+  // 组内按 id 定序而不是 updatedAt —— 运行中的会话 updatedAt 每轮都在涨，
+  // 按它排会让多个并行任务的卡片随每次刷新来回换位。
+  active.sort((a, b) => statusOf(a).rank - statusOf(b).rank || a.id.localeCompare(b.id))
 
   const groups: Group[] = []
   if (active.length) groups.push({ key: "active", label: "进行中 · 待处理", items: active })
@@ -113,6 +115,7 @@ function AskCard(props: { ask: ChatPendingAsk; onDone: () => void | Promise<void
   }
 
   const questions = () => props.ask.questions ?? []
+  // 自定义输入常驻（opencode 的提问默认允许自由回答）；有输入时它优先于选项
   const assembled = (): string[][] =>
     questions().map((_, i) => {
       const f = (free()[i] ?? "").trim()
@@ -120,8 +123,10 @@ function AskCard(props: { ask: ChatPendingAsk; onDone: () => void | Promise<void
       return sel()[i] ?? []
     })
   const complete = () => assembled().every((a) => a.length > 0)
+  const freeActive = (qi: number) => (free()[qi] ?? "").trim().length > 0
 
   function toggleOption(qi: number, label: string, multiple: boolean | undefined) {
+    setFree((f) => ({ ...f, [qi]: "" }))
     setSel((s) => {
       const cur = s[qi] ?? []
       const next = multiple ? (cur.includes(label) ? cur.filter((x) => x !== label) : [...cur, label]) : [label]
@@ -133,10 +138,10 @@ function AskCard(props: { ask: ChatPendingAsk; onDone: () => void | Promise<void
   }
 
   return (
-    <div class="sess-ask">
+    <div class="sess-ask" data-kind={props.ask.kind}>
       <div class="sess-ask-head">
-        <Icon name="alert-triangle" size={14} />
-        <b>{props.ask.kind === "permission" ? "权限申请 — 会话已暂停等待确认" : "agent 提问 — 会话已暂停等待回答"}</b>
+        <span class="sess-ask-badge">{props.ask.kind === "permission" ? "权限申请" : "agent 提问"}</span>
+        <span class="sess-ask-paused">会话已暂停，等待{props.ask.kind === "permission" ? "确认" : "回答"}</span>
       </div>
 
       <Show when={props.ask.kind === "permission"}>
@@ -147,17 +152,21 @@ function AskCard(props: { ask: ChatPendingAsk; onDone: () => void | Promise<void
               <span class="sess-ask-patterns">{props.ask.patterns!.join("  ")}</span>
             </Show>
           </div>
-          <div class="sess-ask-actions">
-            <button class="sess-ask-btn ok" disabled={busy()} onClick={() => void send({ kind: "permission", requestId: props.ask.requestId, reply: "once" })}>
-              允许一次
-            </button>
-            <button class="sess-ask-btn" disabled={busy()} onClick={() => void send({ kind: "permission", requestId: props.ask.requestId, reply: "always" })}>
-              总是允许
-            </button>
-            <button class="sess-ask-btn bad" disabled={busy()} onClick={() => void send({ kind: "permission", requestId: props.ask.requestId, reply: "reject" })}>
-              拒绝
-            </button>
-          </div>
+        </div>
+        <div class="sess-ask-foot">
+          <Show when={err()}>
+            <span class="sess-ask-err">{err()}</span>
+          </Show>
+          <span class="sess-ask-spacer" />
+          <button class="sess-ask-btn bad" disabled={busy()} onClick={() => void send({ kind: "permission", requestId: props.ask.requestId, reply: "reject" })}>
+            拒绝
+          </button>
+          <button class="sess-ask-btn" disabled={busy()} onClick={() => void send({ kind: "permission", requestId: props.ask.requestId, reply: "always" })}>
+            总是允许
+          </button>
+          <button class="sess-ask-btn ok" disabled={busy()} onClick={() => void send({ kind: "permission", requestId: props.ask.requestId, reply: "once" })}>
+            允许一次
+          </button>
         </div>
       </Show>
 
@@ -172,46 +181,56 @@ function AskCard(props: { ask: ChatPendingAsk; onDone: () => void | Promise<void
                     {(o) => (
                       <button
                         class="sess-ask-opt"
-                        data-on={(sel()[qi] ?? []).includes(o().label)}
+                        data-on={!freeActive(qi) && (sel()[qi] ?? []).includes(o().label)}
                         disabled={busy()}
-                        title={o().description}
                         onClick={() => toggleOption(qi, o().label, q().multiple)}
                       >
-                        {o().label}
+                        <span class="sess-ask-marker" data-multi={q().multiple ? "1" : undefined} aria-hidden="true" />
+                        <span class="sess-ask-opt-text">
+                          <span class="sess-ask-opt-label">{o().label}</span>
+                          <Show when={o().description}>
+                            <span class="sess-ask-opt-desc">{o().description}</span>
+                          </Show>
+                        </span>
                       </button>
                     )}
                   </Index>
+                  <label class="sess-ask-opt sess-ask-custom" data-on={freeActive(qi)}>
+                    <span class="sess-ask-marker" aria-hidden="true" />
+                    <input
+                      class="sess-ask-free"
+                      placeholder="自定义回答…"
+                      value={free()[qi] ?? ""}
+                      disabled={busy()}
+                      onInput={(e) => setFree((f) => ({ ...f, [qi]: e.currentTarget.value }))}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && complete()) {
+                          void send({ kind: "question", requestId: props.ask.requestId, answers: assembled() })
+                        }
+                      }}
+                    />
+                  </label>
                 </div>
-                <Show when={q().custom}>
-                  <input
-                    class="sess-ask-free"
-                    placeholder="或输入自定义回答…"
-                    value={free()[qi] ?? ""}
-                    onInput={(e) => setFree((f) => ({ ...f, [qi]: e.currentTarget.value }))}
-                  />
-                </Show>
               </div>
             )}
           </Index>
-          <div class="sess-ask-actions">
-            <Show when={questions().length > 1 || questions().some((q) => q.multiple || q.custom)}>
-              <button
-                class="sess-ask-btn ok"
-                disabled={busy() || !complete()}
-                onClick={() => void send({ kind: "question", requestId: props.ask.requestId, answers: assembled() })}
-              >
-                提交回答
-              </button>
-            </Show>
-            <button class="sess-ask-btn bad" disabled={busy()} onClick={() => void send({ kind: "question", requestId: props.ask.requestId, reject: true })}>
-              拒绝作答
-            </button>
-          </div>
         </div>
-      </Show>
-
-      <Show when={err()}>
-        <div class="sess-ask-err">{err()}</div>
+        <div class="sess-ask-foot">
+          <Show when={err()}>
+            <span class="sess-ask-err">{err()}</span>
+          </Show>
+          <span class="sess-ask-spacer" />
+          <button class="sess-ask-btn bad" disabled={busy()} onClick={() => void send({ kind: "question", requestId: props.ask.requestId, reject: true })}>
+            拒绝作答
+          </button>
+          <button
+            class="sess-ask-btn ok"
+            disabled={busy() || !complete()}
+            onClick={() => void send({ kind: "question", requestId: props.ask.requestId, answers: assembled() })}
+          >
+            提交回答
+          </button>
+        </div>
       </Show>
     </div>
   )
@@ -342,8 +361,22 @@ function SessionModal(props: { id: string; entry: () => ChatMonitorEntry | undef
       try {
         const h = await api.chat.history(props.id)
         const follow = nearBottom()
-        setMsgs(h)
-        if (follow) jumpToEnd()
+        // 每次 history 都是全新对象数组，直接 setMsgs 会让 <For> 全量重建 DOM，
+        // 用户往上翻阅时滚动位置就被打回。内容没变就跳过；变了且不在底部时显式恢复。
+        const prev = msgs()
+        const changed =
+          h.length !== prev.length ||
+          JSON.stringify(h[h.length - 1] ?? null) !== JSON.stringify(prev[prev.length - 1] ?? null)
+        if (changed) {
+          const keep = !follow && logEl ? logEl.scrollTop : undefined
+          setMsgs(h)
+          if (follow) jumpToEnd()
+          else if (keep !== undefined) {
+            requestAnimationFrame(() => {
+              if (logEl) logEl.scrollTop = keep
+            })
+          }
+        }
       } catch {
         /* transient */
       } finally {
@@ -477,9 +510,16 @@ function SessionModal(props: { id: string; entry: () => ChatMonitorEntry | undef
             </Show>
           </div>
 
-          {/* pending ask/question — TUI 式：紧贴输入框上方，会话暂停时在这里作答 */}
-          <Show when={props.entry()?.ask} keyed>
-            {(a) => <AskCard ask={a} onDone={async () => { try { setMsgs(await api.chat.history(props.id)) } catch {} }} />}
+          {/* pending ask/question — TUI 式：紧贴输入框上方，会话暂停时在这里作答。
+              keyed 按 requestId：monitor 每轮都会给全新 ask 对象，按对象身份 keyed
+              会周期性重挂载（打了一半的自定义回答被清空、界面抖动）。 */}
+          <Show when={props.entry()?.ask?.requestId} keyed>
+            {(_rid: string) => (
+              <AskCard
+                ask={props.entry()!.ask!}
+                onDone={async () => { try { setMsgs(await api.chat.history(props.id)) } catch {} }}
+              />
+            )}
           </Show>
 
           {/* compose */}

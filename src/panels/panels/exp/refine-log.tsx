@@ -302,99 +302,128 @@ type JudgeLogRow = {
   entry_id: string
   workflow: string
   verdicts: JudgeVerdictRow[]
+  /** 后端 join 自它判定的那次召回：该轮的用户消息摘录 / 触发类型 / turn 号 */
+  context?: { user_text_excerpt?: string; trigger?: string; turn_index?: number }
 }
 const JSTATE_LABEL: Record<string, string> = { applied: "采用", ignored: "忽略", not_relevant: "无关", bad: "问题" }
+const JSTATE_HINT: Record<string, string> = {
+  applied: "本轮工作可观察地遵循了这条经验",
+  ignored: "本轮在做相关工作，但没有按这条经验做",
+  not_relevant: "本轮工作根本没碰这条经验的主题（过度召回信号）",
+  bad: "这条经验的存在/应用导致了异常",
+}
+const JTRIGGER_LABEL: Record<string, string> = {
+  user_message: "用户消息",
+  new_user_mid_loop: "追加消息",
+  tool: "工具活动观察",
+  baseline: "基线首填",
+  dry_run: "试运行",
+}
 
 function JudgeLog(): JSX.Element {
   const client = useExpClient()
-  const [data] = createResource<JudgeLogRow[]>(async () => {
-    const r = await client.get<{ entries: JudgeLogRow[] }>("/refiner/judge-log?limit=100").catch(() => ({ entries: [] }))
-    return r.entries ?? []
-  })
-  const [open, setOpen] = createSignal<Set<string>>(new Set())
-  const toggle = (id: string) =>
-    setOpen((s) => {
-      const n = new Set(s)
-      n.has(id) ? n.delete(id) : n.add(id)
-      return n
-    })
-  const counts = (vs: JudgeVerdictRow[]) => {
-    const c: Record<string, number> = {}
-    for (const v of vs) c[v.state] = (c[v.state] ?? 0) + 1
-    return c
+  const PAGE = 30
+  const [rows, setRows] = createSignal<JudgeLogRow[]>([])
+  const [total, setTotal] = createSignal<number | undefined>()
+  const [loading, setLoading] = createSignal(false)
+  const [loadedOnce, setLoadedOnce] = createSignal(false)
+
+  async function loadMore(): Promise<void> {
+    setLoading(true)
+    try {
+      const r = await client.get<{ entries: JudgeLogRow[]; total?: number }>(
+        `/refiner/judge-log?limit=${PAGE}&offset=${rows().length}`,
+      )
+      // 旧后端不过滤 SKIP 行（verdicts 为空）——那种行没有任何可读信息，挡掉
+      const fresh = (r?.entries ?? []).filter((x) => Array.isArray(x.verdicts) && x.verdicts.length > 0)
+      setRows((cur) => [...cur, ...fresh])
+      if (typeof r?.total === "number") setTotal(r.total)
+    } catch {
+      /* 后端不在线 — 空态提示兜底 */
+    } finally {
+      setLoading(false)
+      setLoadedOnce(true)
+    }
   }
+  onMount(() => void loadMore())
+
+  const hasMore = () => (total() !== undefined ? rows().length < (total() ?? 0) : rows().length > 0 && rows().length % PAGE === 0)
 
   return (
     <section class="rl-section jl-sec">
       <div class="rl-section-head">
         <h2 class="rl-section-title">判定日志</h2>
         <span class="sk-hint" style={{ margin: 0 }}>
-          judge 每轮对注入经验的判定(采用/忽略/无关/问题)。只记录,不影响召回。
+          judge 每轮对注入经验的判定。只记录,不影响召回。采用=照做了 / 忽略=相关但没照做 / 无关=没碰这主题 / 问题=造成异常。
         </span>
       </div>
       <Show
-        when={(data() ?? []).length > 0}
-        fallback={<div class="sk-empty">还没有判定记录(agent 跑过几轮带注入的会话后才会出现)。</div>}
+        when={rows().length > 0}
+        fallback={
+          <div class="sk-empty">
+            {loadedOnce() ? "还没有判定记录(agent 跑过几轮带注入的会话后才会出现)。" : "加载中…"}
+          </div>
+        }
       >
         <div class="jl-feed">
-          <For each={data()}>
+          <For each={rows()}>
             {(row) => (
               <div class="jl-run">
-                <button class="jl-run-hd" onClick={() => toggle(row.id)}>
-                  <span class="jl-caret" data-open={open().has(row.id)}>
-                    ▸
-                  </span>
+                {/* 头行：时间 / 会话 / judge 归的任务类型 / 触发来源 —— 判定的是哪轮工作 */}
+                <div class="jl-run-meta">
+                  <Show when={row.workflow}>
+                    <span class="jl-wf">{row.workflow}</span>
+                  </Show>
                   <Show when={row.session_id}>
                     <span class="jl-sess" title={`会话 ${row.session_id}`}>
                       …{row.session_id.slice(-6)}
                     </span>
                   </Show>
-                  <Show when={row.workflow}>
-                    <span class="jl-wf">{row.workflow}</span>
+                  <Show when={row.context?.trigger}>
+                    <span class="jl-trigger">{JTRIGGER_LABEL[row.context!.trigger!] ?? row.context!.trigger}</span>
                   </Show>
-                  <span class="jl-counts">
-                    <For each={Object.entries(counts(row.verdicts))}>
-                      {([st, n]) => (
-                        <span class={`jl-badge jl-${st}`}>
-                          {JSTATE_LABEL[st] ?? st} {n}
-                        </span>
-                      )}
-                    </For>
-                  </span>
+                  <Show when={row.context?.turn_index}>
+                    <span class="jl-turn">turn {row.context!.turn_index}</span>
+                  </Show>
+                  <span class="jl-meta-spacer" />
                   <span class="jl-time">{fmtTime(row.created_at)}</span>
-                </button>
-                <Show when={open().has(row.id)}>
-                  <div class="jl-verdicts">
-                    <For each={row.verdicts}>
-                      {(v) => (
-                        <div class="jl-verdict">
-                          {/* line 1: verdict chip + which experience */}
-                          <div class="jl-verdict-hd">
-                            <span class={`jl-badge jl-${v.state}`}>{JSTATE_LABEL[v.state] ?? v.state}</span>
-                            <button
-                              type="button"
-                              class="jl-vtitle"
-                              title={`查看经验 ${v.id}`}
-                              onClick={() => setGPeekId(v.id)}
-                            >
-                              {v.title || v.id}
-                            </button>
-                            <Show when={v.bad_subtype}>
-                              <span class="jl-subtype">{v.bad_subtype}</span>
-                            </Show>
-                          </div>
-                          {/* line 2: the judge's full reasoning, wrapped */}
-                          <Show when={v.rationale}>
-                            <p class="jl-rationale">{v.rationale}</p>
+                </div>
+                {/* 判定针对的那轮任务（召回时的用户消息/活动摘录）——没有它就看不懂判了什么 */}
+                <Show when={row.context?.user_text_excerpt}>
+                  <p class="jl-ctx" title={row.context!.user_text_excerpt}>
+                    {row.context!.user_text_excerpt}
+                  </p>
+                </Show>
+                <div class="jl-verdicts">
+                  <For each={row.verdicts}>
+                    {(v) => (
+                      <div class="jl-verdict">
+                        <div class="jl-verdict-hd">
+                          <span class={`jl-badge jl-${v.state}`} title={JSTATE_HINT[v.state]}>
+                            {JSTATE_LABEL[v.state] ?? v.state}
+                          </span>
+                          <button type="button" class="jl-vtitle" title={`查看经验 ${v.id}`} onClick={() => setGPeekId(v.id)}>
+                            {v.title || v.id}
+                          </button>
+                          <Show when={v.bad_subtype}>
+                            <span class="jl-subtype">{v.bad_subtype}</span>
                           </Show>
                         </div>
-                      )}
-                    </For>
-                  </div>
-                </Show>
+                        <Show when={v.rationale}>
+                          <p class="jl-rationale">{v.rationale}</p>
+                        </Show>
+                      </div>
+                    )}
+                  </For>
+                </div>
               </div>
             )}
           </For>
+          <Show when={hasMore()}>
+            <button type="button" class="jl-more" disabled={loading()} onClick={() => void loadMore()}>
+              {loading() ? "加载中…" : `加载更多${total() !== undefined ? `（${rows().length}/${total()}）` : ""}`}
+            </button>
+          </Show>
         </div>
       </Show>
     </section>

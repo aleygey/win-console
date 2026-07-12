@@ -1062,7 +1062,8 @@
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
-.jl-more {
+.jl-more,
+.rl-more {
   align-self: center;
   margin: 2px 0 4px;
   padding: 4px 16px;
@@ -1074,11 +1075,18 @@
   font-size: 12px;
   cursor: pointer;
 }
-.jl-more:hover:not(:disabled) {
+/* 整理日志的加载更多是 section 的直接子元素（不在 flex 列里），居中靠 margin */
+.rl-more {
+  display: block;
+  margin: 10px auto 4px;
+}
+.jl-more:hover:not(:disabled),
+.rl-more:hover:not(:disabled) {
   color: var(--text-strong);
   border-color: var(--border-base);
 }
-.jl-more:disabled {
+.jl-more:disabled,
+.rl-more:disabled {
   opacity: 0.6;
 }
 .jl-wf {

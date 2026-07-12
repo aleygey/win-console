@@ -183,6 +183,44 @@
   background: var(--surface-warning-weak);
   color: var(--text-on-warning-base);
 }
+/* 拖拽预览小卡片 — setDragImage 的快照源，渲染在视口外 */
+.sess-drag-ghost {
+  position: absolute;
+  top: -200px;
+  left: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 280px;
+  padding: 6px 12px;
+  border: 1px solid var(--border-base);
+  border-radius: 7px;
+  background: var(--surface-raised-strong);
+  box-shadow: var(--shadow-md);
+  font-size: 12.5px;
+  color: var(--text-strong);
+  pointer-events: none;
+}
+
+.sess-drag-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--text-weaker);
+}
+
+.sess-drag-dot[data-status="busy"],
+.sess-drag-dot[data-status="retry"] {
+  background: light-dark(var(--text-on-warning-base), #d19a66);
+}
+
+.sess-drag-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* taskflow 任务角标 — 会话由任务看板发起时显示 */
 .sess-task-chip {
   margin-left: 6px;

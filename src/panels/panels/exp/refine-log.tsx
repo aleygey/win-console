@@ -28,7 +28,6 @@
  */
 
 import {
-  createResource,
   createSignal,
   createMemo,
   createEffect,
@@ -673,16 +672,35 @@ function ActivityLog(): JSX.Element {
   const [filter, setFilter] = createSignal<"all" | "sediment" | "noise" | "error">("all")
   const [openRuns, setOpenRuns] = createSignal<Set<string>>(new Set())
 
-  const [data, { refetch }] = createResource<RefinerLogResponse>(() =>
-    client.get<RefinerLogResponse>("/refiner/log"),
-  )
+  // 分页加载（日志只增不减，全量拉会越来越慢）；老后端忽略 offset 无 total 时
+  // 退化为满页启发式。筛选/计数只作用于已加载窗口。
+  const PAGE = 40
+  const [rows, setRows] = createSignal<RefinerLogEntry[]>([])
+  const [total, setTotal] = createSignal<number | undefined>()
+  const [loading, setLoading] = createSignal(false)
+  const [loadErr, setLoadErr] = createSignal<string | undefined>()
 
-  // Newest-first; tolerate a bare-array response just in case.
-  const entries = createMemo<RefinerLogEntry[]>(() => {
-    const raw = data()
-    const list = Array.isArray(raw) ? (raw as RefinerLogEntry[]) : (raw?.entries ?? [])
-    return [...list].sort((a, b) => b.created_at - a.created_at)
-  })
+  async function load(reset = false): Promise<void> {
+    setLoading(true)
+    setLoadErr(undefined)
+    try {
+      const offset = reset ? 0 : rows().length
+      const raw = await client.get<RefinerLogResponse & { total?: number }>(`/refiner/log?limit=${PAGE}&offset=${offset}`)
+      const list = Array.isArray(raw) ? (raw as RefinerLogEntry[]) : (raw?.entries ?? [])
+      setRows((cur) => (reset ? list : [...cur, ...list]))
+      if (!Array.isArray(raw) && typeof raw?.total === "number") setTotal(raw.total)
+    } catch (e) {
+      setLoadErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }
+  onMount(() => void load(true))
+  const hasMore = () =>
+    total() !== undefined ? rows().length < (total() ?? 0) : rows().length > 0 && rows().length % PAGE === 0
+
+  // Newest-first (后端已排序，这里兜底一次)。
+  const entries = createMemo<RefinerLogEntry[]>(() => [...rows()].sort((a, b) => b.created_at - a.created_at))
 
   const visible = createMemo<RefinerLogEntry[]>(() => {
     const mode = filter()
@@ -722,10 +740,10 @@ function ActivityLog(): JSX.Element {
         <button
           type="button"
           class="rl-btn rl-btn-ghost"
-          onClick={() => void refetch()}
-          disabled={data.loading}
+          onClick={() => void load(true)}
+          disabled={loading()}
         >
-          {data.loading ? "刷新中…" : "↻ 刷新"}
+          {loading() ? "刷新中…" : "↻ 刷新"}
         </button>
       </header>
 
@@ -745,13 +763,11 @@ function ActivityLog(): JSX.Element {
       </div>
 
       <Switch>
-        <Match when={data.loading && !data()}>
+        <Match when={loading() && rows().length === 0}>
           <div class="rl-empty">加载日志中…</div>
         </Match>
-        <Match when={data.error}>
-          <div class="rl-error">
-            加载失败：{data.error instanceof Error ? data.error.message : String(data.error)}
-          </div>
+        <Match when={loadErr() && rows().length === 0}>
+          <div class="rl-error">加载失败：{loadErr()}</div>
         </Match>
         <Match when={visible().length === 0}>
           <div class="rl-empty">
@@ -770,6 +786,11 @@ function ActivityLog(): JSX.Element {
           </ol>
         </Match>
       </Switch>
+      <Show when={hasMore()}>
+        <button type="button" class="rl-more" disabled={loading()} onClick={() => void load()}>
+          {loading() ? "加载中…" : `加载更多${total() !== undefined ? `（${rows().length}/${total()}）` : ""}`}
+        </button>
+      </Show>
     </section>
   )
 }

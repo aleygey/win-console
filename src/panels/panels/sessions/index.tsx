@@ -253,7 +253,25 @@ function SessionCard(props: {
       class="sess-card"
       data-status={st().key}
       draggable={props.draggable}
-      onDragStart={(ev) => props.dragMime && ev.dataTransfer?.setData(props.dragMime, props.e.id)}
+      onDragStart={(ev) => {
+        if (!props.dragMime) return
+        ev.dataTransfer?.setData(props.dragMime, props.e.id)
+        // 拖拽预览：与看板脚注同款的小卡片（状态点+标题），替代浏览器默认的
+        // 半透明整卡快照。元素必须已渲染才能做 drag image —— 挂到 body、移出
+        // 视口，快照取走后下一帧移除。
+        const g = document.createElement("div")
+        g.className = "sess-drag-ghost"
+        const dot = document.createElement("span")
+        dot.className = "sess-drag-dot"
+        dot.dataset.status = statusOf(props.e).key
+        const title = document.createElement("span")
+        title.className = "sess-drag-title"
+        title.textContent = props.e.title || props.e.id
+        g.append(dot, title)
+        document.body.appendChild(g)
+        ev.dataTransfer?.setDragImage(g, 14, 16)
+        setTimeout(() => g.remove(), 0)
+      }}
       onClick={props.onOpen}
     >
       <div class="sess-card-top">

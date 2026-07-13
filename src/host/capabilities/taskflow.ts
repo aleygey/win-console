@@ -282,10 +282,17 @@ function fenceTracker(): { feed(line: string): boolean; inFence(): boolean; open
   }
 }
 
+/** 一行是否是 Markdown 水平分隔线（---, ***, ___，允许尾随空白）。
+ *  章内分隔线归工具管（章节间的 `---` 由 ensureChapterSeparators 统一维护），
+ *  agent 在小节里手写的水平线一律剥掉。表格分隔行含 `|`，不会命中。 */
+function isHRule(line: string): boolean {
+  return /^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)
+}
+
 /** content 消毒：正文里的 markdown 标题会破坏章节解析边界（`##` 会截断
  *  「记录」区、伪编号标题会污染章节索引）——统一降级为粗体行。代码块内不动。
- *  未闭合的围栏自动补一行闭合——否则落盘后毒化整篇文档的章节扫描。
- *  这就是"结构只能由工具产生"的强制执行点。 */
+ *  章内手写的水平线（---）剥掉。未闭合的围栏自动补一行闭合——否则落盘后
+ *  毒化整篇文档的章节扫描。这就是"结构只能由工具产生"的强制执行点。 */
 export function sanitizeSectionContent(content: string): string {
   const out: string[] = []
   const fence = fenceTracker()
@@ -294,6 +301,7 @@ export function sanitizeSectionContent(content: string): string {
       out.push(ln)
       continue
     }
+    if (!fence.inFence() && isHRule(ln)) continue // 章内水平线剥掉
     const h = !fence.inFence() && /^\s*#{1,6}\s+(.*)$/.exec(ln)
     if (h) out.push(`**${h[1].trim()}**`)
     else out.push(ln)
@@ -321,6 +329,7 @@ export function restructureSectionContent(content: string, parent: number[], chi
       parsed.push({ raw })
       continue
     }
+    if (!fence.inFence() && isHRule(raw)) continue // 章内手写水平线剥掉（分隔由工具管）
     const h = !fence.inFence() && /^\s*(#{1,6})\s+(.*)$/.exec(raw)
     if (h) {
       // 剥掉标题自带的编号（"1. 名字"/"2.3 名字"）——编号由工具统一分配。
@@ -331,7 +340,8 @@ export function restructureSectionContent(content: string, parent: number[], chi
     } else parsed.push({ raw })
   }
   const tailClose = fence.inFence() ? [fence.openMark()!] : []
-  if (levels.size === 0) return [...content.replace(/\s+$/, "").split(/\r?\n/), ...tailClose].join("\n")
+  // 无标题：从 parsed 重建（水平线已剔除），不能回退用原始 content。
+  if (levels.size === 0) return [...parsed.map((p) => p.raw), ...tailClose].join("\n").replace(/\s+$/, "")
 
   // 相对层级：content 里出现的最浅标题=第一级，次浅=第二级，更深=第三级+
   const sorted = [...levels].sort((a, b) => a - b)
@@ -513,6 +523,30 @@ export function listRecordSections(body: string): Array<{ num: string; title: st
     out.push({ num: m[2], title: m[3].trim() })
   }
   return out
+}
+
+/** 取正文区里某个编号章节的完整片段（含其编号子节，如取「1」带出 1.1/1.1.1）；
+ *  章节不存在 → null。给 task_get 的单章节读取用。 */
+export function extractSection(body: string, section: string): string | null {
+  const num = parseSecNum(section)
+  if (!num) return null
+  const lines = body.split(/\r?\n/)
+  const zone = chapterZone(lines)
+  const heads = scanChapterHeads(lines, zone)
+  const idx = heads.findIndex((h) => cmpSecNum(h.num, num) === 0)
+  if (idx < 0) return null
+  const start = heads[idx].line
+  const isChildOf = (h: { num: number[] }) => h.num.length > num.length && num.every((x, k) => h.num[k] === x)
+  let end = zone.end
+  for (let k = idx + 1; k < heads.length; k++) {
+    if (!isChildOf(heads[k])) {
+      end = heads[k].line
+      break
+    }
+  }
+  // 去掉尾部空行与章间分隔线
+  while (end > start && (lines[end - 1].trim() === "" || lines[end - 1].trim() === "---")) end--
+  return lines.slice(start, end).join("\n")
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -990,23 +1024,26 @@ function launchContract(meta: TaskMeta, sessionId: string, docText: string, rule
     "",
     "可用工具（win-host MCP）——只能通过它们写文档，保证格式统一：",
     `- task_write_section(id="${meta.id}", section, title, content, mode?, complete_todo?)：`,
-    "  【正文唯一入口】写编号章节。mode=replace 整章重写（默认）/ append 章节末尾追加增量。",
-    "  content 里可以直接按习惯写 markdown 小节标题（## / ### 均可）——工具会自动把它们",
-    "  规范成本章的编号小节（### N.1、#### N.1.1，更深层级降为粗体），小节名和内容随你定。",
-    "  注意：replace 时 content 带标题 = 整章连旧小节一起重写；append 的新小节自动续号。",
+    "  【正文唯一入口】写一个完整的顶级章节（section 用 1 / 2 / 3…）。一次把该阶段的所有小节",
+    "  都写进 content，一步成型——别一个小节一个小节地分开调用。content 里小节直接用 markdown",
+    "  标题标记，从几级开始都行（#/##/### 都可以，工具按相对深度排），工具自动编号成 ### N.1、",
+    "  #### N.1.1（再深降为粗体），小节名和内容随你定。**不用自己写 `---` 分隔线**（章间分隔工具管）。",
+    "  结构化写：小节标题+列表+表格+代码块，别把一段塞成单行长文本。",
+    "  mode=replace（默认）整章重写 / append 章末追加续号；改已有章节别新开重复号。",
     `  当前已有章节：${recs.length ? recs.map((r) => r.num).join(", ") : "（无）"}；新阶段从 ${nextNum} 开始。`,
     `- task_todo(id="${meta.id}", action, text)：勾选/新增待办（action: check/uncheck/add）`,
     `- task_issue(id="${meta.id}", problem, cause?, solution)：问题+解决一次性记录（自动生成「问题」章节）`,
     `- task_log(id="${meta.id}", text, session="${sessionId}")：底部日志表追加一行——只在阶段完成时记，不要流水账`,
     `- task_set_status(id="${meta.id}", column)：移动看板卡片（列见看板）`,
     `- task_set_field(id="${meta.id}", key, value)：更新 type/pha_issue 字段`,
-    `- task_get(id="${meta.id}")：读文档全文；task_list()：看板全览`,
+    `- task_get(id="${meta.id}", section?)：读文档全文，或只读某编号章节（改章节前先读它省 token）；task_list()：看板全览`,
     "（若这些工具不在你的工具列表里，就按上面的布局直接编辑任务文档，路径用「你的运行环境内」那个形态。）",
     "",
     "写文档的硬规则（这份文档是给人复查的，不是过程日志）：",
     "1. 只做「待办」里列出的事。",
-    "2. 每完成一个阶段 → task_write_section 写一个编号章节 + complete_todo 勾掉对应待办",
-    "   + task_log 记一行。章节 = 结论先行、关键数据用表格、命令/清单用代码块、决策写理由。",
+    "2. 每完成一个阶段 → task_write_section 写一个完整章节（导语+全部小节一次写全）",
+    "   + complete_todo 勾掉对应待办 + task_log 记一行。章节 = 结论先行、关键数据用表格、",
+    "   命令/清单用代码块、决策写理由、小节分层——别堆成一大段或单行长文本。",
     "3. **禁止**写入：探索过程的碎碎念、无结论的中间状态、与任务无关的边角信息、",
     "   大段原始输出（截取关键行即可）。写之前自问：这段被删掉会有人惋惜吗？不会就别写。",
     "4. 修改已有章节：同号 replace 整章重写；补充增量用 mode=append，别新开重复章节。",
@@ -1132,12 +1169,30 @@ const tools: McpToolDef[] = [
   },
   {
     name: "task_get",
-    description: "读取一个 taskflow 任务文档的全文（id = 文档文件名，如「低温启动bug」）。",
-    inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+    description:
+      "读取一个 taskflow 任务文档（id = 文档文件名，如「低温启动bug」）。" +
+      "不带 section = 读全文；带 section（如 1 / 1.2）= 只读该编号章节（含其子节），改章节前先读它省 token。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        section: { type: "string", description: "可选：只读这个编号章节（如 1、1.2），含其编号子节" },
+      },
+      required: ["id"],
+    },
     async handler(args, ctx) {
       const t = resolveTask(ctx, String(args.id ?? ""))
       if (!t) return { text: `task not found: ${args.id}`, isError: true }
       const rules = cfg(ctx).pathMap
+      const section = String(args.section ?? "").trim()
+      if (section) {
+        const frag = extractSection(t.body, section)
+        if (!frag) {
+          const avail = listRecordSections(t.body).map((r) => r.num).join(", ") || "（无）"
+          return { text: `任务「${t.meta.id}」没有章节 ${section}。现有章节：${avail}`, isError: true }
+        }
+        return { text: `任务「${t.meta.id}」· 章节 ${section}：\n\n${frag}` }
+      }
       return { text: `路径(Windows): ${t.meta.path}\n路径(你的环境): ${vmPathNote(rules, t.meta.path)}\n\n${t.raw}` }
     },
   },
@@ -1252,21 +1307,30 @@ const tools: McpToolDef[] = [
   {
     name: "task_write_section",
     description:
-      "【记录任务正文的唯一方式】向任务正文区（--- 分隔线之后）写一个编号章节。" +
-      "section 是章节号（1 / 1.2 / 1.2.3，最多三级；层级/排序/编号由工具控制）。" +
-      "content 是 Markdown 正文：可以直接按习惯写小节标题（## / ### 均可）——工具会自动把它们规范成本章的编号小节" +
-      "（### N.1、#### N.1.1，更深层级降为粗体），小节名字和内容随你定；数据用表格、命令用代码块。" +
-      "mode=replace（默认）：content 不含标题=只重写本章导语（已有编号子节保留）；含标题=整章连子节一起重写。" +
-      "mode=append：在本章末尾追加增量，content 里的小节自动接着已有编号续号。" +
+      "【记录任务正文的唯一方式】向任务正文区（--- 分隔线之后）写一个完整的顶级章节。" +
+      "section 用顶级章节号（1 / 2 / 3…）；一次把这个阶段的全部小节都写进 content，一步成型——" +
+      "不要一个小节一个小节地分开调用（那样割裂又啰嗦）。" +
+      "content 是 Markdown：小节直接用标题标记，从几级标题开始都行（#、##、### 都可以，工具按相对深度排）——" +
+      "工具自动编号成本章的编号小节（### N.1、#### N.1.1，再深降为粗体），小节名和内容随你定；数据用表格、命令用代码块。" +
+      "不用自己写 `---` 分隔线（章节之间的分隔线由工具统一维护，写进去会被去掉）。" +
+      "结构化写：小节标题+列表+表格+代码块，别把一大段塞成单行长文本。" +
+      "mode=replace（默认）：content 含标题=整章连子节一起重写；不含标题=只重写本章导语（已有子节保留）。" +
+      "mode=append：在本章末尾追加增量，content 里的小节自动接着已有编号续号（改已有章节别新开重复章节）。" +
       "只写有效信息：结论先行、关键数据、决策理由；过程性碎碎念留在会话里，不要进文档。" +
       "传 complete_todo（待办文本包含匹配）可同时勾掉待办。",
     inputSchema: {
       type: "object",
       properties: {
         id: { type: "string" },
-        section: { type: "string", description: "章节号，如 1、1.2、1.2.3（最多三级）" },
+        section: {
+          type: "string",
+          description: "章节号：优先用顶级号 1 / 2 / 3（整章一次写全，小节放 content 里）；1.2 / 1.2.3 仅用于事后单独补改某个小节",
+        },
         title: { type: "string", description: "章节标题（append 模式下留空=保持原标题）" },
-        content: { type: "string", description: "章节正文（Markdown）" },
+        content: {
+          type: "string",
+          description: "章节正文（Markdown）。小节用标题标记（层级随意，工具会编号）；用列表/表格/代码块结构化，勿写单行长文本；不用加 --- 分隔线",
+        },
         mode: { type: "string", enum: ["replace", "append"], description: "replace=整章重写(默认)；append=章节末尾追加" },
         complete_todo: { type: "string", description: "可选：同时勾掉的待办（文本包含匹配）" },
       },
@@ -1276,9 +1340,10 @@ const tools: McpToolDef[] = [
       const t = resolveTask(ctx, String(args.id ?? ""))
       if (!t) return { text: `task not found: ${args.id}`, isError: true }
       const content = String(args.content ?? "")
-      if (content.length > 6000) {
+      const LIMIT = 24000
+      if (content.length > LIMIT) {
         return {
-          text: `content 过长（${content.length} 字符 > 6000）。请精炼：只保留结论、关键数据（表格）与决策理由；细节过程不进文档。也可以拆成多个子章节分次写入。`,
+          text: `content 过长（${content.length} 字符 > ${LIMIT}）。超大清单/表格拆成多个小节、用 mode=append 分批写；普通内容请精炼——只留结论、关键数据、决策理由。`,
           isError: true,
         }
       }
@@ -1295,7 +1360,21 @@ const tools: McpToolDef[] = [
       }
       writeTask(t, t.fm, body)
       ctx.emit("taskflow:changed", { id: t.meta.id })
-      return { text: `ok: 章节 ${args.section} 已${mode === "append" ? "追加" : "写入"}${todoNote}` }
+      // 结构化提醒（不拦截）：正文里出现超长单行（非代码块/表格/URL）→ 建议拆成小节/列表
+      const longLine = (() => {
+        const fence = fenceTracker()
+        for (const ln of content.split(/\r?\n/)) {
+          if (fence.feed(ln) || fence.inFence()) continue
+          const s = ln.trim()
+          if (s.includes("|") || /^https?:\/\/\S+$/.test(s)) continue
+          if (s.length > 500) return s.length
+        }
+        return 0
+      })()
+      const structNote = longLine
+        ? `；提示：有 ${longLine} 字符的超长单行，建议拆成小节标题/列表/表格，别堆成一行`
+        : ""
+      return { text: `ok: 章节 ${args.section} 已${mode === "append" ? "追加" : "写入"}${todoNote}${structNote}` }
     },
   },
   {

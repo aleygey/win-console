@@ -364,7 +364,20 @@ export function createChat(getConfig: () => GlobalConfig): ChatBackend {
     }
   }
 
-  return { send, createSession, monitor, replyAsk, reset: () => {}, sessions, history, models, undo, deleteSession }
+  /** Rename a session (opencode /rename) — session.update sets its title. */
+  async function rename(sessionId: string, title: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const update = c().session.update
+      if (typeof update !== "function") return { ok: false, error: "当前 SDK 不支持重命名会话" }
+      const res = await update({ path: { id: sessionId }, body: { title: title.trim() }, query: dir() })
+      if (res?.error) return { ok: false, error: describe(res.error) }
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: String(e) }
+    }
+  }
+
+  return { send, createSession, monitor, replyAsk, reset: () => {}, sessions, history, models, undo, deleteSession, rename }
 }
 
 /** Truncate for card display. */

@@ -75,6 +75,14 @@ export const chatCapability: Capability = {
     },
     {
       method: "POST",
+      path: "/rename",
+      handler: async (req, ctx) => {
+        const b = (req.body ?? {}) as { sessionId?: string; title?: string }
+        return { body: await ctx.native.chat.rename(b.sessionId ?? "", b.title ?? "") }
+      },
+    },
+    {
+      method: "POST",
       path: "/reset",
       handler: async (req, ctx) => {
         ctx.native.chat.reset((req.body as { sessionId?: string })?.sessionId)

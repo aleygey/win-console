@@ -67,6 +67,7 @@ export const api: WinHostClient = {
     models: (dir) => client.chat.models(dir),
     undo: (id) => client.chat.undo(id),
     deleteSession: (id) => client.chat.deleteSession(id),
+    rename: (id, title) => client.chat.rename(id, title),
   },
   notify: { test: (r) => client.notify.test(r) },
   clipboard: { image: () => client.clipboard.image() },

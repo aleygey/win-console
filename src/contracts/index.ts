@@ -161,6 +161,8 @@ export interface ChatBackend {
   /** Revert the last message in a session. */
   undo(sessionId: string): Promise<{ ok: boolean; error?: string }>
   deleteSession(sessionId: string): Promise<{ ok: boolean; error?: string }>
+  /** Rename a session's title (opencode /rename). */
+  rename(sessionId: string, title: string): Promise<{ ok: boolean; error?: string }>
 }
 
 export type NotifyLevel = "info" | "warn" | "error"
@@ -574,6 +576,7 @@ export interface WinHostClient {
     models(directory?: string): Promise<ModelInfo[]>
     undo(sessionId: string): Promise<{ ok: boolean; error?: string }>
     deleteSession(sessionId: string): Promise<{ ok: boolean; error?: string }>
+    rename(sessionId: string, title: string): Promise<{ ok: boolean; error?: string }>
   }
   // (the outlook convenience was removed with the standalone outlook capability —
   //  the daemon-side COM access lives on NativeHost; mail automation is mailflow)

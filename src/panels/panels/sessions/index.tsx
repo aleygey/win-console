@@ -236,23 +236,32 @@ function AskCard(props: { ask: ChatPendingAsk; onDone: () => void | Promise<void
   )
 }
 
-/** One session card in the wall. */
+/** One session card in the wall — 精简版：只显示状态 / 关联任务 / 标题 / 待办进展。
+ *  标题可内联重命名（同 opencode /rename）；点卡片其余处打开详情弹窗。 */
 function SessionCard(props: {
   e: ChatMonitorEntry
-  /** taskflow 任务归属（会话由任务看板发起时显示角标，点击跳任务看板） */
+  /** taskflow 任务归属（会话由任务看板发起时显示角标，点击在 Obsidian 打开文档） */
   task?: { id: string; title: string }
   /** 卡片可拖走关联：（跨 iframe）拖到 Obsidian 看板卡片上 */
   draggable?: boolean
   dragMime?: string
   onOpen: () => void
+  renaming: boolean
+  renameDraft: string
+  onRenameStart: () => void
+  onRenameInput: (v: string) => void
+  onRenameCommit: () => void
+  onRenameCancel: () => void
 }): JSX.Element {
   const st = () => statusOf(props.e)
+  const stop = (ev: Event) => ev.stopPropagation()
   return (
-    <button
-      type="button"
+    <div
       class="sess-card"
+      role="button"
+      tabindex={0}
       data-status={st().key}
-      draggable={props.draggable}
+      draggable={props.draggable && !props.renaming}
       onDragStart={(ev) => {
         if (!props.dragMime) return
         ev.dataTransfer?.setData(props.dragMime, props.e.id)
@@ -272,7 +281,14 @@ function SessionCard(props: {
         ev.dataTransfer?.setDragImage(g, 14, 16)
         setTimeout(() => g.remove(), 0)
       }}
-      onClick={props.onOpen}
+      onClick={() => !props.renaming && props.onOpen()}
+      onKeyDown={(ev) => {
+        if (props.renaming) return
+        if ((ev.key === "Enter" || ev.key === " ") && ev.target === ev.currentTarget) {
+          ev.preventDefault()
+          props.onOpen()
+        }
+      }}
     >
       <div class="sess-card-top">
         <span class="sess-status" data-status={st().key}>
@@ -300,13 +316,42 @@ function SessionCard(props: {
         <span class="sess-card-time">{timeAgo(props.e.updatedAt)}</span>
       </div>
 
-      <div class="sess-card-title">{props.e.title}</div>
-
-      <Show when={props.e.task}>
-        <div class="sess-task" title={props.e.task}>
-          {props.e.task}
-        </div>
-      </Show>
+      <div class="sess-card-titlerow">
+        <Show
+          when={props.renaming}
+          fallback={
+            <>
+              <span class="sess-card-title">{props.e.title}</span>
+              <button
+                class="sess-rename-btn"
+                title="重命名会话（同 opencode /rename）"
+                onClick={(ev) => {
+                  stop(ev)
+                  props.onRenameStart()
+                }}
+              >
+                <Icon name="pencil" size={13} />
+              </button>
+            </>
+          }
+        >
+          <input
+            class="sess-rename-input"
+            value={props.renameDraft}
+            spellcheck={false}
+            ref={(el) => queueMicrotask(() => { el.focus(); el.select() })}
+            onClick={stop}
+            onPointerDown={stop}
+            onInput={(ev) => props.onRenameInput(ev.currentTarget.value)}
+            onBlur={() => props.onRenameCommit()}
+            onKeyDown={(ev) => {
+              ev.stopPropagation()
+              if (ev.key === "Enter") { ev.preventDefault(); props.onRenameCommit() }
+              else if (ev.key === "Escape") { ev.preventDefault(); props.onRenameCancel() }
+            }}
+          />
+        </Show>
+      </div>
 
       <Show when={props.e.todos}>
         {(t) => (
@@ -320,35 +365,10 @@ function SessionCard(props: {
                 <div class="sess-todo-fill" style={{ width: `${t().total ? Math.round((t().done / t().total) * 100) : 0}%` }} />
               </div>
             </div>
-            <Show when={t().current}>
-              <div class="sess-todo-current" title={t().current}>
-                ▸ {t().current}
-              </div>
-            </Show>
           </div>
         )}
       </Show>
-
-      {/* latest step */}
-      <Show when={props.e.progress}>
-        {(p) => (
-          <div class="sess-progress" title="最近一步动作">
-            <span class="sess-progress-text">{p().text}</span>
-          </div>
-        )}
-      </Show>
-
-      <Show when={props.e.tools && (props.e.tools.running > 0 || props.e.tools.error > 0)}>
-        <div class="sess-tools">
-          <Show when={props.e.tools!.running > 0}>
-            <span class="sess-tool-chip run">{props.e.tools!.running} 个工具运行中</span>
-          </Show>
-          <Show when={props.e.tools!.error > 0}>
-            <span class="sess-tool-chip bad">{props.e.tools!.error} 个工具出错</span>
-          </Show>
-        </div>
-      </Show>
-    </button>
+    </div>
   )
 }
 
@@ -601,6 +621,32 @@ function SessionsPanel(): JSX.Element {
   const openEntry = () => entries().find((e) => e.id === openId())
   const busyCount = () => entries().filter((e) => e.busy).length
 
+  // 卡片内联重命名（像 opencode /rename）。状态放面板级：轮询会重建卡片，
+  // 编辑态若挂在卡片上会被刷掉——放这里 + 编辑时冻结卡墙，输入不受打断。
+  const [renameId, setRenameId] = createSignal<string | undefined>()
+  const [renameDraft, setRenameDraft] = createSignal("")
+  function startRename(id: string, current: string) {
+    setRenameDraft(current)
+    setRenameId(id)
+  }
+  function cancelRename() {
+    setRenameId(undefined)
+  }
+  async function commitRename() {
+    const id = renameId()
+    const title = renameDraft().trim()
+    setRenameId(undefined)
+    const cur = entries().find((e) => e.id === id)
+    if (!id || !title || cur?.title === title) return
+    try {
+      await api.chat.rename(id, title)
+    } catch {
+      /* 失败下一轮 monitor 会拉回原名 */
+    }
+    clearTimeout(monitorTimer)
+    void monitorTick() // 立刻刷新，卡片显示新名字
+  }
+
   // taskflow 归属：sessionId → 任务。daemon 无 taskflow（旧版）时静默为空。
   const [taskBySession, setTaskBySession] = createSignal<Record<string, { id: string; title: string }>>({})
   async function loadTaskMap(): Promise<void> {
@@ -637,7 +683,8 @@ function SessionsPanel(): JSX.Element {
   let monitorTimer: ReturnType<typeof setTimeout> | undefined
   async function monitorTick(): Promise<void> {
     if (stopped) return
-    if (!document.hidden || !loaded()) {
+    // 正在重命名某卡片时冻结卡墙——否则轮询重建 DOM 会打断输入。
+    if (!renameId() && (!document.hidden || !loaded())) {
       try {
         setEntries(await api.chat.monitor(24))
         setErr(undefined)
@@ -728,6 +775,12 @@ function SessionsPanel(): JSX.Element {
                           draggable
                           dragMime={DRAG_MIME}
                           onOpen={() => setOpenId(e.id)}
+                          renaming={renameId() === e.id}
+                          renameDraft={renameDraft()}
+                          onRenameStart={() => startRename(e.id, e.title)}
+                          onRenameInput={setRenameDraft}
+                          onRenameCommit={() => void commitRename()}
+                          onRenameCancel={cancelRename}
                         />
                       )}
                     </For>

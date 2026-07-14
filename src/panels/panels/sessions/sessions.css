@@ -246,7 +246,14 @@
   color: var(--text-weaker);
   font-variant-numeric: tabular-nums;
 }
+/* 标题行 = 标题 + 悬停出现的重命名铅笔 */
+.sess-card-titlerow {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
 .sess-card-title {
+  flex: 1 1 auto;
   min-width: 0;
   font-weight: var(--font-weight-medium);
   color: var(--text-strong);
@@ -260,18 +267,45 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.sess-task {
-  font-size: var(--font-size-small);
-  color: var(--text-base);
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+.sess-rename-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin: -2px -4px 0 0;
+  border: 0;
+  background: transparent;
+  color: var(--icon-base);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.1s ease,
+    background 0.1s ease;
 }
-
+.sess-card:hover .sess-rename-btn {
+  opacity: 1;
+}
+.sess-rename-btn:hover {
+  background: var(--button-ghost-hover);
+  color: var(--icon-hover);
+}
+.sess-rename-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-strong);
+  background: var(--surface-inset-base);
+  border: 1px solid var(--border-selected);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--ring);
+  padding: 3px 8px;
+  outline: none;
+}
 /* todo progress */
 .sess-todo {
   display: flex;
@@ -303,51 +337,6 @@
   height: 100%;
   background: var(--cobalt-9);
   transition: width 0.3s ease;
-}
-.sess-todo-current {
-  font-size: 11px;
-  color: var(--text-weak);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* latest step */
-.sess-progress {
-  min-width: 0;
-  width: 100%;
-  color: var(--text-weak);
-  font-size: var(--font-size-small);
-}
-.sess-progress-text {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-family-mono);
-  font-size: 11px;
-}
-.sess-tools {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.sess-tool-chip {
-  font-size: 11px;
-  padding: 1px 8px;
-  border-radius: 999px;
-  background: var(--surface-weak);
-  color: var(--text-weak);
-  white-space: nowrap;
-}
-.sess-tool-chip.run {
-  background: var(--surface-interactive-weak, var(--surface-info-weak));
-  color: var(--text-interactive-base, var(--text-on-info-base));
-}
-.sess-tool-chip.bad {
-  background: var(--surface-critical-weak);
-  color: var(--text-on-critical-base);
 }
 @keyframes sess-pulse {
   0%,
@@ -524,10 +513,15 @@
   padding: 0 16px;
   border: 0;
   border-radius: var(--radius-md);
-  background: var(--cobalt-9);
+  /* 深色下 cobalt-9(#4f86e6)太亮，白字只有 3.6:1 —— 用更深的蓝，白字过 AA(4.5:1)。 */
+  background: light-dark(#2f66cc, #3f74d4);
   color: #fff;
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
   font-size: var(--font-size-small);
+}
+.sess-send:hover:not(:disabled) {
+  background: light-dark(#2a5cba, #4d80e0);
 }
 .sess-send:disabled {
   opacity: 0.55;
@@ -689,10 +683,11 @@
   /* 0.95em (≈13.3px): the earlier 0.88em made `.hex`/`.srec`-style inline code
      read visibly smaller than the surrounding 14px prose */
   font-size: 0.95em;
-  /* TUI 配色：行内代码 = 绿色关键字。深色下裸绿字无底色（正如终端）；
-     浅色下绿字 + 极淡底提高辨识。 */
-  color: light-dark(var(--text-on-success-base), #98c379);
-  background: light-dark(color-mix(in srgb, var(--surface-success-weak) 65%, transparent), transparent);
+  /* 中性行内代码 —— 之前的绿字跟加粗的橙字互相打架("绿棕不搭")。改为
+     正文色 + 淡底 chip（GitHub 式），明暗都干净、不与任何强调色冲突。 */
+  color: var(--text-strong);
+  background: var(--surface-weak);
+  border: 1px solid var(--border-weaker-base);
   padding: 1px 5px;
   border-radius: var(--radius-sm);
 }
@@ -748,10 +743,9 @@
   border-radius: var(--radius-sm);
 }
 .sess-modal .markdown strong {
+  /* 加粗 = 仅靠字重强调，用正文强色，不再上橙色（跟绿字打架）。 */
   font-weight: var(--font-weight-semibold);
-  /* TUI 配色：加粗关键词 = 柔和橙（深色下参考 opencode TUI 的 #d19a66 系，
-     不再用饱和琥珀跟绿色打架；浅色下保持深琥珀可读）。 */
-  color: light-dark(var(--text-on-warning-base), #d19a66);
+  color: var(--text-strong);
 }
 .sess-modal .markdown pre code {
   /* keep code blocks neutral — the green tint is for inline keywords only */
@@ -1037,10 +1031,11 @@
 }
 .sess-ask-perm code {
   font-family: var(--font-family-mono);
-  background: var(--surface-base);
+  background: var(--surface-weak);
+  border: 1px solid var(--border-weaker-base);
   border-radius: var(--radius-sm);
   padding: 1px 6px;
-  color: light-dark(var(--text-on-success-base), #98c379);
+  color: var(--text-strong);
 }
 .sess-ask-patterns {
   font-family: var(--font-family-mono);

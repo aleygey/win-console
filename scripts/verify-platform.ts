@@ -48,6 +48,7 @@ const native: NativeHost = {
     models: async () => [],
     undo: async () => ({ ok: true }),
     deleteSession: async () => ({ ok: true }),
+    rename: async () => ({ ok: true }),
   },
 }
 

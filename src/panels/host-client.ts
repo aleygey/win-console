@@ -62,6 +62,7 @@ export function createWinHostClient(baseUrl: string, platform = "web"): WinHostC
         (await jget<{ models: ModelInfo[] }>("/cap/chat/models" + (dir ? `?dir=${encodeURIComponent(dir)}` : ""))).models ?? [],
       undo: (id) => jpost<{ ok: boolean; error?: string }>("/cap/chat/undo", { sessionId: id }),
       deleteSession: (id) => jpost<{ ok: boolean; error?: string }>("/cap/chat/delete", { sessionId: id }),
+      rename: (id, title) => jpost<{ ok: boolean; error?: string }>("/cap/chat/rename", { sessionId: id, title }),
     },
     notify: { test: (req) => jpost<NotifyRes>("/cap/notify/test", req) },
     clipboard: {

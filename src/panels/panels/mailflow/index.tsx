@@ -43,6 +43,8 @@ function MailflowPanel() {
   const [saved, setSaved] = createSignal(false)
   const [showHistory, setShowHistory] = createSignal(false)
   const [folders, setFolders] = createSignal<string[]>([])
+  // 历史会话（供规则挑「专用会话」用；新→旧）
+  const [sessions, setSessions] = createSignal<{ id: string; title: string; updatedAt: number }[]>([])
   // ids of rules currently expanded for editing (saved rules render collapsed).
   const [editingIds, setEditingIds] = createSignal<Set<string>>(new Set())
   const isEditing = (id: string) => editingIds().has(id)
@@ -90,14 +92,33 @@ function MailflowPanel() {
       /* daemon offline → leave as-is */
     }
   }
+  async function loadSessions() {
+    try {
+      const ss = await api.chat.sessions()
+      const sorted = [...ss].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+      setSessions(sorted.map((s) => ({ id: s.id, title: s.title || "(未命名会话)", updatedAt: s.updatedAt ?? 0 })))
+    } catch {
+      /* daemon offline / opencode down → 只能选新建 */
+    }
+  }
   onMount(() => {
     void loadRules()
     void loadQueue()
+    void loadSessions()
     void api
       .read<{ ok: boolean; folders?: string[] }>("mailflow", "/folders")
       .then((r) => setFolders(r.folders ?? []))
       .catch(() => {})
   })
+
+  /** 会话下拉选项 = 历史会话；若规则存了一个已不在列表里的 id 也补进去(不丢失)。 */
+  function sessionOptions(current?: string): { id: string; label: string }[] {
+    const opts = sessions().map((s) => ({ id: s.id, label: `${s.title}  ·  …${s.id.slice(-6)}` }))
+    if (current && current.trim() && !opts.some((o) => o.id === current)) {
+      opts.unshift({ id: current, label: `(当前) …${current.slice(-6)}` })
+    }
+    return opts
+  }
 
   async function saveRules() {
     setErr("")
@@ -429,6 +450,32 @@ function MailflowPanel() {
                         placeholder="例:这是一封 Bugzilla 通知,请分析 bug 并给出修复建议"
                         onInput={(e) => patchRule(i, { prompt: e.currentTarget.value })}
                       />
+                    </label>
+
+                    <label class="mf-field">
+                      <span class="mf-label">
+                        专用会话(可选)
+                        <button
+                          class="mf-inline-link"
+                          title="刷新会话列表"
+                          onClick={(e) => {
+                            e.preventDefault()
+                            void loadSessions()
+                          }}
+                        >
+                          <Icon name="rotate-ccw" size={11} /> 刷新
+                        </button>
+                      </span>
+                      <select
+                        value={rule().sessionId ?? ""}
+                        onChange={(e) => patchRule(i, { sessionId: e.currentTarget.value || undefined })}
+                      >
+                        <option value="">新建会话(默认,每封邮件各开一个)</option>
+                        <For each={sessionOptions(rule().sessionId)}>{(s) => <option value={s.id}>{s.label}</option>}</For>
+                      </select>
+                      <span class="mf-hint">
+                        选一个历史会话 = 每封匹配邮件都发进这个对话(上下文累积、专人处理);留「新建」则每封各开新会话。
+                      </span>
                     </label>
 
                     {/* 邮件信息勾选 — 替代旧的 {subject}/{body} 占位符:勾了什么,

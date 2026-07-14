@@ -577,6 +577,28 @@
   color: var(--text-weaker);
   line-height: var(--line-height-normal);
 }
+.mf-hint {
+  font-size: var(--font-size-small);
+  color: var(--text-weaker);
+  line-height: var(--line-height-normal);
+}
+/* 内联小链接（跟在 mf-label 后面，如「刷新」） */
+.mf-inline-link {
+  margin-left: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-link, var(--cobalt-9));
+  font: inherit;
+  font-size: var(--font-size-small);
+  cursor: pointer;
+}
+.mf-inline-link:hover {
+  text-decoration: underline;
+}
 
 @container (max-width: 560px) {
   .mf-grid {

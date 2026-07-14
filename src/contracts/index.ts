@@ -261,6 +261,9 @@ export type MailRule = {
   include?: MailInclude
   /** Model for trigger-session / ai-review-reply (omit = opencode's default). */
   model?: ModelRef
+  /** 专用会话：设了就把每封匹配邮件都发进这个已有 opencode 会话（同一对话累积
+   *  上下文）；留空 = 每封邮件新建一个会话（默认，历史行为不变）。 */
+  sessionId?: string
 }
 
 /** One email read from Outlook, carrying the EntryID needed to reply later. */

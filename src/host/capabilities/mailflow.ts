@@ -230,7 +230,9 @@ async function dispatch(ctx: HostContext, rule: MailRule, m: MailMessage): Promi
       item.decidedAt = Date.now()
     } else if (rule.action === "trigger-session") {
       const att = await attachmentFiles(ctx, rule, m)
-      const res = await sendWithDeadline(ctx, { text: mailText(rule, m) + att.note, files: att.files, model: rule.model })
+      // 规则设了专用会话 → 续用它（同一对话累积）；否则 sessionId 省略 = 新建。
+      const sessionId = rule.sessionId?.trim() || undefined
+      const res = await sendWithDeadline(ctx, { text: mailText(rule, m) + att.note, files: att.files, model: rule.model, sessionId })
       if (res.ok) {
         item.sessionId = res.sessionId
         item.status = "done"
@@ -242,7 +244,8 @@ async function dispatch(ctx: HostContext, rule: MailRule, m: MailMessage): Promi
     } else {
       // ai-review-reply: draft only — never sends here.
       const att = await attachmentFiles(ctx, rule, m)
-      const res = await sendWithDeadline(ctx, { text: mailText(rule, m) + att.note, files: att.files, model: rule.model })
+      const sessionId = rule.sessionId?.trim() || undefined
+      const res = await sendWithDeadline(ctx, { text: mailText(rule, m) + att.note, files: att.files, model: rule.model, sessionId })
       if (res.ok) {
         item.draft = res.reply ?? ""
         item.sessionId = res.sessionId

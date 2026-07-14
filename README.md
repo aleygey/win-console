@@ -1,135 +1,255 @@
-# super-work-host
+# win-console
 
-把原来的 **win-console 桌面 App** 拆成「**一个常驻 daemon + 多个瘦前端**」。日常用 **Obsidian** 当统一入口,原生能力(Outlook / 通知 / 全局热键 / 托盘)留在后台 daemon 里,**不依赖 Obsidian 开不开**;Electron 控制台降级为**管理端**(配置 / 能力开关 / 健康)。新增插件 = 写一个 Capability,自动出现在三处:agent 工具、前端面板、控制台配置。
+`win-console`（应用名：**opencode Win Host**）是一个运行在 Windows 上的常驻宿主。它把 Outlook、桌面通知、剪贴板和全局热键等 Windows 原生能力，通过 HTTP、SSE 和 MCP 提供给 opencode，并提供管理控制台、快速对话浮窗和 Obsidian 插件三种入口。
 
+项目内部包名仍为 `super-work-host`。
+
+## 为什么需要它
+
+当 opencode 运行在 WSL 或 Linux 虚拟机中时，它无法直接使用 Windows 上的 Outlook COM、系统通知和全局热键。win-console 在 Windows 侧常驻，将这些能力集中到一个 daemon 中：
+
+- 原生能力不依赖 Obsidian 或控制台是否打开；
+- agent 通过 MCP 自动发现 Windows 工具；
+- 各个前端通过同一套 HTTP/SSE API 访问能力和实时事件；
+- 新能力只需注册一次，即可按需出现在 agent、前端和管理配置中。
+
+## 主要功能
+
+| 功能 | 说明 |
+| --- | --- |
+| 快速对话 | 默认使用 `Ctrl+Space` 唤起 Spotlight 浮窗，并连接 opencode 会话 |
+| 会话监控 | 在控制台查看会话进度、工具调用、待确认权限和提问，并跳转到关联任务 |
+| Outlook 与邮件工作流 | 搜索、读取和保存邮件附件；按规则通知、触发会话或生成人工审核后发送的回复 |
+| Taskflow | 解析 Obsidian Kanban 看板，关联任务、会话和 PHA，并通过 MCP 维护任务文档 |
+| Windows 原生能力 | 提供桌面通知、剪贴板图片和经典版 Outlook COM 集成 |
+| 经验库 | 前端直连独立的 playbook 后端，支持经验整理、检索和冷启动 |
+| 插件平台 | 支持编译期 Capability，也支持外部进程在运行时注册能力、面板和 MCP 工具 |
+
+## 架构
+
+```mermaid
+flowchart LR
+  subgraph Linux["WSL / Linux VM"]
+    Agent["opencode agent"]
+    OpenCode["opencode serve<br/>默认 :4096"]
+    Playbook["playbook 后端<br/>默认 :53550（可选）"]
+  end
+
+  subgraph Windows["Windows"]
+    Host["win-host daemon<br/>Electron + 托盘<br/>默认 :8799"]
+    Native["Outlook COM / Toast / Clipboard<br/>全局热键"]
+    Console["管理控制台"]
+    Spotlight["Spotlight 浮窗"]
+    Obsidian["Obsidian 插件"]
+    External["外部 Capability"]
+  end
+
+  Host -->|opencode SDK| OpenCode
+  Agent -->|MCP /mcp| Host
+  Host --> Native
+  Console -->|HTTP / SSE| Host
+  Spotlight -->|HTTP / SSE| Host
+  Obsidian -->|HTTP / SSE| Host
+  Console -.->|经验库 API| Playbook
+  Obsidian -.->|经验库 API| Playbook
+  External -->|注册 / 心跳 / 事件| Host
 ```
-                        ┌──────────────────────────────────────┐
-                        │  win-host daemon (Electron·托盘常驻)    │
-                        │   capabilities/*  →  注册一次,三处出现   │
-   opencode serve ◄─────┤   /mcp     agent 自动发现工具           │
-   (agent 在 VM)        │   /cap/*   UI 调用                      │
-                        │   /events  SSE(新邮件/热键唤起)         │
-                        │   /config  单一配置源                   │
-                        │   全局热键 + spotlight + 控制台窗口       │
-                        └──────────────────────────────────────┘
-                            ▲                 ▲                ▲
-              HTTP/SSE      │                 │                │
-        ┌───────────────────┘                 │                └──────────────┐
-   ┌────┴──────────────┐         ┌────────────┴────────┐        ┌────────────┴───────┐
-   │  Obsidian 插件     │         │  Electron 控制台      │        │  spotlight 浮窗      │
-   │  日常统一入口        │         │  管理端(配置/开关)     │        │  热键兜底(无 Obsidian)│
-   │  panels→ItemView   │         │  panels + 管理面板     │        │  仅 chat 面板         │
-   └───────────────────┘         └─────────────────────┘        └────────────────────┘
-```
 
-## 目录
+daemon 是唯一的配置源和能力注册中心。控制台与 Obsidian 中的经验库面板会从 daemon 读取后端地址，再直接访问 playbook 服务。
 
-```
-src/
-  contracts/        唯一的“缝”:Capability / NativeHost / WinHostClient / 事件 / 配置(零依赖)
-  host/             daemon
-    index.ts        Electron 入口:托盘 + 热键策略 + spotlight/控制台窗口 + 起服务
-    server.ts       HTTP + SSE + MCP(纯 node,smoke 可测)
-    registry.ts     能力注册表:聚合 tools(MCP)/routes(HTTP)/configSchema
-    config.ts       单一配置源(注入文件路径,不 import electron)
-    events.ts       事件总线 → SSE
-    mcp.ts          MCP over Streamable HTTP(工具来自 registry)
-    chat.ts         opencode SDK(多 session)
-    capabilities/   chat · mailflow · notify · clipboard · exp  ← 加内建能力就丢这里
-    native/         outlook(COM)· notify · clipboard · icon · index(真 NativeHost)
-    shell/          tray · hotkey · windows · obsidian(检测/前置)
-    preload/        console · spotlight(只注入 daemon 自身 URL)
-  panels/           共享 SolidJS 面板(沿用 registry.ts 契约)
-    bridge.ts       api:WinHostClient(替代原 IPC preload)
-    host-client.ts  HTTP/SSE 客户端
-    panels/{chat,outlook,notify,exp}/   原样接入
-  console-ui/       管理端 renderer(含 manage 面板:configSchema → 表单)
-  spotlight-ui/     热键浮窗 renderer(仅 chat)
-  obsidian-plugin/  manifest + main.ts + view.tsx(ItemView 挂 panels)
-```
+## 环境要求
 
-## 跑起来
+- Windows 10/11；
+- Node.js 20 或更高版本，以及 npm；
+- opencode（使用对话、会话监控或邮件自动化时需要）；
+- 经典版 Outlook（使用 Outlook COM 能力时需要，新版 Outlook 不支持 COM）；
+- Obsidian 1.5 或更高版本（可选）；
+- 独立的 playbook 后端（使用经验库时可选）。
 
-```sh
+## 快速开始
+
+```powershell
+git clone https://github.com/aleygey/win-console.git
+cd win-console
 npm install
-npm run smoke         # 无 electron / 无 opencode,验证 daemon 全部 HTTP 接缝(已通过)
-npm run typecheck     # host / web / obsidian 三套 tsconfig(均通过)
-npm run build:all     # 产出 out/host out/console out/spotlight out/obsidian
-npm start             # 构建 + 启动 daemon(托盘常驻,无主窗口)
+
+# 不依赖 Electron 和 opencode 的服务端冒烟测试
+npm run smoke
+
+# 检查 host、Web 和 Obsidian 三套 TypeScript 配置
+npm run typecheck
+
+# 构建并启动托盘 daemon
+npm start
 ```
 
-### 连 opencode(对话面板需要)
+启动后应用常驻系统托盘，不会自动显示主窗口。可以从托盘打开管理控制台，也可以在浏览器访问 `http://127.0.0.1:8799`。健康检查地址为 `http://127.0.0.1:8799/health`。
 
-在 Linux VM 上:
+## 连接 opencode
+
+### 1. 让 daemon 连接 opencode serve
+
+在 WSL 或 Linux VM 中启动：
 
 ```sh
 opencode serve --hostname 0.0.0.0 --port 4096
 ```
 
-在控制台「管理 · 全局设置」里把 `opencode serve 地址` 指向 VM 的 IP(或环境变量 `OPENCODE_URL`)。
+然后在管理控制台的全局设置中，将“opencode serve 地址”设置为 Windows 能访问的地址，例如 `http://192.168.56.101:4096`。也可以在首次启动前设置环境变量：
 
-### 让 agent 用上 outlook / notify(纯 MCP,推荐)
-
-把 `opencode.example.jsonc` 的 `mcp` 块合进你工程的 `opencode.jsonc`,`url` 指向 Windows 宿主机 IP 的 `:8799/mcp`。以后**加工具只改 daemon**,opencode 永不动。
-
-### 经验库(exp · playbook)
-
-后端是独立服务,**跑在 VM 上**(`opencode-plugin-playbook`,Hono API,已开放 CORS):
-
-```sh
-# 在 VM 上(库目录里)
-EXP_PORT=53550 bun scripts/serve.ts        # 或 EXP_WORKTREE=/path 指定另一个库
+```powershell
+$env:OPENCODE_URL = "http://192.168.56.101:4096"
+npm start
 ```
 
-前端(exp 面板)是 super-work-host 共享面板的一员,**直连**这个后端——不经 daemon 代理(避免把后端的 PUT/PATCH/DELETE/204 语义穿过来)。但后端地址**只在一处配置**:控制台「管理」里的 `exp · playbook 后端地址`(即 exp 能力的 `playbookUrl`)。各前端开面板时从 daemon 的 `/capabilities` 读这个地址,再直连 VM。Obsidian 设置里那个「经验库地址」留空即跟随 host;只想本 vault 用别的才填。
+如果 opencode 与 daemon 在同一台 Windows 主机上运行，默认的 `http://127.0.0.1:4096` 即可。
 
-> 即:exp 是一个**只有配置、没有路由/工具**的 Capability。它把「该连哪个后端」这件事纳入统一管理,同时让后端保持在 VM 上独立演进。
+### 2. 让 agent 使用 Windows MCP 工具
 
-### 装进 Obsidian
+将 [`opencode.example.jsonc`](opencode.example.jsonc) 中的 `mcp` 配置合并到 opencode 项目的 `opencode.jsonc`，并把地址改为 opencode 运行环境能够访问的 Windows 主机地址：
 
-把 `out/obsidian/` 整个目录拷进 vault 的 `.obsidian/plugins/winhost-console/`,在 Obsidian 设置里启用。插件设置里填 `win-host 地址`(默认 `http://127.0.0.1:8799`)。
+```jsonc
+{
+  "mcp": {
+    "winhost": {
+      "type": "remote",
+      "url": "http://<WINDOWS_HOST_IP>:8799/mcp",
+      "enabled": true
+    }
+  }
+}
+```
 
-## 加一个新插件(Capability)
+连接后，agent 会自动发现 `outlook_search`、`outlook_read`、`outlook_attachments`、`notify_desktop` 和 `task_*` 等工具。新增 Capability 工具时，无需再次修改 opencode 配置。
 
-1. 在 `src/host/capabilities/` 写一个模块,导出 `Capability`:可选 `tools`(给 agent)、`routes`(给 UI)、`configSchema`(给控制台,自动生成表单)、`init/dispose`、`emit` 事件。
-2. 在 `src/host/capabilities/index.ts` 的 `builtinCapabilities` 里 import 一行。
-3. 想要 UI:在 `src/panels/panels/<id>/` 写一个 SolidJS 面板,`registerPanel({ id, ... })`,并在各前端 entry import 一行;`hasPanel: true` 让控制台知道它有面板。
+> [!IMPORTANT]
+> daemon 默认监听所有网络接口，且 MCP 与业务 API 当前没有统一鉴权。请仅在可信网络或仅主机网络中使用，并通过 Windows 防火墙限制 `8799` 端口；不要将其暴露到公网。`WIN_HOST_PLUGIN_TOKEN` 只保护外部插件注册端点，不保护 `/mcp`。
 
-参考 `capabilities/mailflow.ts`——它一个文件里同时演示了 route + tool + configSchema + 事件轮询。
+## 安装 Obsidian 插件
 
-## 外部插件平台(运行时注册,不重编宿主)
+先构建插件：
 
-上面是**内建**能力(编译进 daemon)。还有一条**外部插件**路径:任意进程(尤其是 opencode 插件)`POST /capabilities/register` 自报 manifest,就能在控制台出现 —— 管理页配置表单、侧栏 iframe 面板、agent 的 `/mcp` 工具(代理到插件),**daemon 一行不改**;插件停掉自动消失。
+```powershell
+npm run build:obsidian
+```
 
-- 协议 + 安全模型 + **如何把真实的 `opencode-plugin-serial` 接进来**:见 **[docs/plugin-platform.md](docs/plugin-platform.md)**。
-- 可直接 `node plugin.mjs` 跑的串口样板(也是写真实插件的模板):见 **[examples/serial-plugin/](examples/serial-plugin/)**。
+将 `out/obsidian/` 中的以下文件复制到 vault 的 `.obsidian/plugins/winhost-console/`：
 
-## 无 GPU / 公司内网工位
+```text
+main.js
+manifest.json
+styles.css
+```
 
-exe 在没有独显的机器(工位 / RDP / VDI)上,Electron 默认开硬件加速会**白屏**(而 `curl 8799` 正常)。本 daemon **默认关闭硬件加速 + 绕过本机回环代理**,无 GPU 也走软件渲染。开关:`WINHOST_GPU=1` 恢复硬件加速;`WINHOST_DEVTOOLS=1` 自动开 DevTools;渲染异常会写 `%APPDATA%\opencode Win Host\winhost-renderer.log`,且空白窗口会把错误画到页面上自曝。
+在 Obsidian 的社区插件设置中启用 **opencode Win Host**。插件默认连接 `http://127.0.0.1:8799`，可在插件设置中修改。
 
-## 热键策略(已选)
+插件提供控制台入口、会话监控，以及启动/继续 Taskflow 任务、另开任务会话和同步 PHA 等命令。Taskflow 会自动把当前 vault 纳入看板扫描范围。
 
-daemon 独占全局热键(默认 `Ctrl+Space`):
-- **Obsidian 在跑** → 用 `WScript.Shell.AppActivate` 前置它 + 发 `summon:chat` 事件(插件打开对话面板)。
-- **没跑** → 弹无边框 spotlight 浮窗(失焦自动消失,Esc 关闭)。
+## 配置
 
-## 验证状态
+常用设置可以在管理控制台中修改。以下环境变量适合首次启动、开发或故障排查：
 
-| 项 | 状态 |
-|---|---|
-| daemon 全部 HTTP/SSE/MCP 接缝(smoke,5 能力) | ✅ 本机实跑通过 |
-| exp 面板 + client 与官方 opencode-exp-console | ✅ 逐字节一致;playbookUrl 走 daemon 配置 |
-| 三套 typecheck(host/web/obsidian) | ✅ 通过 |
-| 四个构建产物(host/console/spotlight/obsidian) | ✅ 通过;obsidian main.js 为标准 CJS `module.exports=Plugin` |
-| Electron 窗口 / 托盘 / 全局热键 / spotlight | ⏳ 需带屏幕的机器 `npm start` 验收 |
-| Outlook COM / 原生 toast | ⏳ 需经典版 Outlook + Windows |
-| 对话真实往返 | ⏳ 需 `opencode serve` 在跑 |
-| Obsidian 加载插件 + 热键前置 | ⏳ 需 Obsidian |
+| 环境变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| `OPENCODE_URL` | `http://127.0.0.1:4096` | opencode serve 地址 |
+| `OPENCODE_DIRECTORY` | 空 | 新会话的默认工作目录 |
+| `WIN_HOST_PORT` | `8799` | daemon HTTP 端口 |
+| `WIN_HOST_HOTKEY` | `Control+Space` | 全局快捷键 |
+| `EXP_API` | `http://localhost:53550` | playbook 后端地址 |
+| `WIN_HOST_PLUGIN_TOKEN` | 空 | 外部插件注册接口的共享 token |
+| `WINHOST_GPU` | 空 | 设为 `1` 时启用 Electron 硬件加速 |
+| `WINHOST_DEVTOOLS` | 空 | 设为 `1` 时自动打开 DevTools |
 
-## 相比原 win-console 的变化
+已保存的控制台配置优先于相应默认值。
 
-- IPC preload bridge → **HTTP/SSE 的 `WinHostClient`**(`panels/bridge.ts`),面板代码几乎不动。
-- `mcp.ts` 的 `TOOLS` + `toolserver.ts` 路由 + `native/*` → 合并为 **Capability**,server 不再硬编码任何业务路由。
-- 一个 Electron App(日常 chat)→ **一个 daemon + 三个前端**;控制台职责从“日常”翻转为“管理”。
-- `win-bridge.ts`(HTTP 插件那条)→ 废弃,统一走 MCP。
+### Taskflow 路径映射
+
+如果任务文档位于 Windows，而 opencode 运行在 WSL、VirtualBox 或其他 Linux 环境，请在“任务看板”配置中设置路径映射，例如：
+
+```text
+C:\Users\me\Documents\Obsidian Vault=/mnt/c/Users/me/Documents/Obsidian Vault
+```
+
+多条映射使用分号分隔。Taskflow 会将映射后的路径交给 agent，并用作任务会话的工作目录。
+
+### 经验库后端
+
+经验库不是由 daemon 代理的内置服务。请单独启动兼容的 playbook 后端，例如：
+
+```sh
+EXP_PORT=53550 bun scripts/serve.ts
+```
+
+再在管理控制台中设置“exp · playbook 后端地址”。各前端从 daemon 读取该配置后直连后端。
+
+## 开发命令
+
+| 命令 | 说明 |
+| --- | --- |
+| `npm run smoke` | 验证 daemon 的 HTTP、SSE、MCP 和 Capability 接缝 |
+| `npm run typecheck` | 检查 host、Web 和 Obsidian TypeScript 项目 |
+| `npm run build:host` | 构建 daemon |
+| `npm run build:renderers` | 构建控制台与 Spotlight |
+| `npm run build:obsidian` | 构建 Obsidian 插件 |
+| `npm run build` | 构建 daemon、控制台与 Spotlight |
+| `npm run build:all` | 构建全部产物 |
+| `npm run start` | 构建并启动 Electron daemon |
+| `npm run dist:win` | 生成 Windows portable 与 NSIS 安装包 |
+
+构建产物位于 `out/`，Windows 安装包位于 `dist/`。
+
+## 项目结构
+
+```text
+src/
+  contracts/        跨层类型、Capability 契约、配置与客户端接口
+  host/             Electron daemon、HTTP/SSE/MCP 服务和原生能力
+    capabilities/   内建能力：chat、mailflow、taskflow、notify、clipboard、exp
+    native/         Outlook COM、Toast、剪贴板和图标
+    shell/          托盘、全局热键和窗口管理
+  panels/           控制台与 Obsidian 共用的 SolidJS 面板
+  console-ui/       管理控制台
+  spotlight-ui/     快速对话浮窗
+  obsidian-plugin/  Obsidian 插件
+docs/               外部插件平台文档
+examples/           外部插件示例
+scripts/            构建、验证与辅助脚本
+```
+
+## 扩展 Capability
+
+### 内建 Capability
+
+1. 在 `src/host/capabilities/` 中创建模块并导出 `Capability`；
+2. 按需提供 `tools`、`routes`、`configSchema`、`events`、`init` 和 `dispose`；
+3. 在 `src/host/capabilities/index.ts` 的 `builtinCapabilities` 中注册；
+4. 如需界面，在 `src/panels/panels/<id>/` 注册 SolidJS 面板，并在对应前端入口中导入。
+
+可以参考 `src/host/capabilities/mailflow.ts`，其中同时包含 MCP 工具、HTTP 路由、配置表单和事件。
+
+### 外部 Capability
+
+外部进程可以通过 `POST /capabilities/register` 在运行时注册 manifest，并通过心跳维持生命周期。注册成功后，能力可提供管理表单、iframe 面板和由 daemon 代理的 MCP 工具，无需重新编译宿主。
+
+- [插件平台协议与安全模型](docs/plugin-platform.md)
+- [串口插件示例](examples/serial-plugin/README.md)
+
+在公司内网中运行外部插件时，建议设置 `WIN_HOST_PLUGIN_TOKEN`，并由插件通过 `x-winhost-token` 请求头携带相同 token。
+
+## 常见问题
+
+### 快速对话没有响应
+
+确认 `opencode serve` 正在运行，并检查管理控制台中的服务地址。若服务位于 WSL 或 VM，还需确认 Windows 能访问该 IP 和端口。
+
+### opencode 连接不到 `/mcp`
+
+在 opencode 所在环境中访问 `http://<WINDOWS_HOST_IP>:8799/health`。如果失败，请检查虚拟机网络模式、Windows 防火墙和 `WIN_HOST_PORT`。
+
+### Electron 窗口白屏
+
+应用默认关闭硬件加速，以兼容 RDP、VDI 和受限显卡环境。如果需要启用 GPU，可设置 `WINHOST_GPU=1`。渲染日志写入 `%APPDATA%\opencode Win Host\winhost-renderer.log`，也可以设置 `WINHOST_DEVTOOLS=1` 打开开发者工具。
+
+### Outlook 工具不可用
+
+Outlook 能力依赖 Windows COM，只支持已配置账户的经典版桌面 Outlook。新版 Outlook、网页版 Outlook 和非 Windows 环境不受支持。

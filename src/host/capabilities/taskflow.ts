@@ -1,5 +1,5 @@
 /**
- * taskflow capability v4 — 看板中心 · 人驱动 · 系统只做记录/连接/标准化。
+ * taskflow capability v5.3 — 看板中心 · 人驱动 · 系统只做记录/连接/标准化。
  *
  * 定位（与 v1「自动状态机」相反）：**你驱动一切**，taskflow 负责三件事——
  *   1) 记录：用固定模板 + 格式化工具，让 agent 结构化地写文档（不再随意发挥）；
@@ -12,8 +12,8 @@
  * 「什么是任务」= 它的 `[[链接]]` 出现在某个看板上。任务文档放哪都行、目录不限。
  * 没有自动派发、没有轮询状态机——poll 仅用于刷新注册表缓存（供看板脚注/面板）。
  *
- * 与 opencode 的接口：MCP 工具（task_*）。若工具不可用，agent 直接编辑同名区域，
- * 文件本身就是接口。
+ * 与 opencode 的接口：MCP 工具（task_*）。任务文档和看板是受管资产；agent
+ * 不得绕过工具直接编辑，工具不可用或调用失败时应停下并向用户报告。
  */
 import type { Capability, HostContext, McpToolDef, ModelRef, RouteDef } from "../../contracts"
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } from "node:fs"
@@ -245,14 +245,18 @@ function editTodo(body: string, action: "check" | "uncheck" | "add", text: strin
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// 「记录」章节写入 — 线性分章节的任务过程记录（1 / 1.2 / 1.2.3）。
+// 「记录」章节写入 — 线性分章节的任务过程记录（1 / 1.2 / 1.2.3 / 1.2.3.4）。
 // 结构（编号+标题+层级）由工具控制，内容是 agent 的自由 Markdown（表格等均可）。
 // ═════════════════════════════════════════════════════════════════════════════
 
-/** "1.2.3" → [1,2,3]；非法/超过 3 级 → null。 */
+export const MAX_SECTION_DEPTH = 4
+
+/** "1.2.3.4" → [1,2,3,4]；非法/超过 MAX_SECTION_DEPTH 级 → null。 */
 export function parseSecNum(s: string): number[] | null {
-  if (!/^\d+(\.\d+){0,2}$/.test(s.trim())) return null
-  return s.trim().split(".").map(Number)
+  const value = s.trim()
+  if (!/^\d+(\.\d+)*$/.test(value)) return null
+  const parts = value.split(".").map(Number)
+  return parts.length <= MAX_SECTION_DEPTH ? parts : null
 }
 
 function cmpSecNum(a: number[], b: number[]): number {
@@ -310,14 +314,14 @@ export function sanitizeSectionContent(content: string): string {
   return out.join("\n")
 }
 
-/** content 结构化（v5.1）：把 content 里的 markdown 标题按相对层级映射成本章的
- *  编号小节——章(## N)内：第一级→### N.i、第二级→#### N.i.j、更深→粗体；
- *  小节(### N.M)内：第一级→#### N.M.j、更深→粗体；小小节(#### N.M.K)内全部粗体。
+/** content 结构化（v5.3）：把 content 里的 markdown 标题按相对层级映射成本章的
+ *  编号小节——章(## N)内：第一级→### N.i、第二级→#### N.i.j、
+ *  第三级→##### N.i.j.k，更深→粗体；对任意父节都按剩余深度做同样映射。
  *  标题原有的纯数字编号（"1."、"2.3"）剥掉换成工具分配的号；名字与内容不动。
  *  第一个一级标题之前出现的更深标题降为粗体（无处挂编号）。代码块内一律不动。
  *  childStart：一级小节起始编号（append 续号用）。 */
 export function restructureSectionContent(content: string, parent: number[], childStart = 1): string {
-  const depthAvail = 3 - parent.length // 章下还能挂几层编号小节
+  const depthAvail = MAX_SECTION_DEPTH - parent.length // 章下还能挂几层编号小节
   if (depthAvail <= 0) return sanitizeSectionContent(content)
 
   type Ln = { raw: string; level?: number; name?: string }
@@ -348,21 +352,21 @@ export function restructureSectionContent(content: string, parent: number[], chi
   const relOf = (lv: number) => sorted.indexOf(lv) + 1
 
   const out: string[] = []
-  let i = childStart - 1 // 一级小节计数（输出前自增）
-  let j = 0 //             二级小节计数（每个一级下重置）
+  // 相对各级计数。第一级从 childStart 起（append 续号）；进入较浅层时重置其后各级。
+  const counters = Array.from({ length: depthAvail }, () => 0)
+  counters[0] = childStart - 1
   for (const ln of parsed) {
     if (ln.level === undefined) {
       out.push(ln.raw)
       continue
     }
     const rel = relOf(ln.level)
-    if (rel === 1 && depthAvail >= 1) {
-      i++
-      j = 0
-      out.push(`${"#".repeat(2 + parent.length)} ${[...parent, i].join(".")} ${ln.name}`)
-    } else if (rel === 2 && depthAvail >= 2 && i >= childStart) {
-      j++
-      out.push(`${"#".repeat(3 + parent.length)} ${[...parent, i, j].join(".")} ${ln.name}`)
+    const hasParents = rel === 1 || counters.slice(0, rel - 1).every((n, idx) => (idx === 0 ? n >= childStart : n > 0))
+    if (rel <= depthAvail && hasParents) {
+      counters[rel - 1]++
+      for (let k = rel; k < counters.length; k++) counters[k] = 0
+      const full = [...parent, ...counters.slice(0, rel)]
+      out.push(`${"#".repeat(1 + full.length)} ${full.join(".")} ${ln.name}`)
     } else {
       out.push(`**${ln.name}**`)
     }
@@ -371,7 +375,7 @@ export function restructureSectionContent(content: string, parent: number[], chi
   return out.join("\n").replace(/\s+$/, "")
 }
 
-const CHAPTER_RE = /^(#{2,4})\s+(\d+(?:\.\d+){0,2})\s+(.*)$/
+const CHAPTER_RE = /^(#{2,5})\s+(\d+(?:\.\d+){0,3})\s+(.*)$/
 
 /** 正文区里扫编号章节标题（fence 内不算——bash 注释「## 2 xxx」不是章节）。 */
 function scanChapterHeads(lines: string[], zone: { start: number; end: number }): Array<{ line: number; num: number[] }> {
@@ -433,7 +437,7 @@ export function writeRecordSection(
   const isChildOf = (h: { num: number[] }) => h.num.length > num.length && num.every((x, k) => h.num[k] === x)
   // content 里是否有会变成编号小节的标题（fence 外）——决定 replace 的替换范围
   const contentHasHeads = (() => {
-    if (3 - num.length <= 0) return false
+    if (MAX_SECTION_DEPTH - num.length <= 0) return false
     const fence = fenceTracker()
     for (const ln of content.split(/\r?\n/)) {
       if (fence.feed(ln) || fence.inFence()) continue
@@ -549,9 +553,80 @@ export function extractSection(body: string, section: string): string | null {
   return lines.slice(start, end).join("\n")
 }
 
+export type SectionPatchError =
+  | "invalid_section"
+  | "section_not_found"
+  | "empty_match"
+  | "match_not_found"
+  | "ambiguous_match"
+  | "outline_changed"
+
+export type SectionPatchResult =
+  | { ok: true; body: string }
+  | { ok: false; error: SectionPatchError }
+
+/** 提取一段正文里的 Markdown 结构边界。比较替换前后签名可以识别由上下文拼接产生的
+ * 标题/水平线/围栏，且不会把代码围栏内部的 `##`、`---` 当成结构。 */
+function markdownStructureSignature(source: string): string {
+  const marks: string[] = []
+  const fence = fenceTracker()
+  for (const line of source.split("\n")) {
+    if (fence.feed(line)) {
+      marks.push(`fence\t${line}`)
+      continue
+    }
+    if (fence.inFence()) continue
+    if (/^\s*#{1,6}\s+/.test(line)) marks.push(`heading\t${line}`)
+    else if (isHRule(line)) marks.push(`hrule\t${line}`)
+  }
+  marks.push(`open\t${fence.openMark() ?? ""}`)
+  return marks.join("\n")
+}
+
+/** 在一个已存在编号章节的正文范围内做精确、唯一替换。
+ *
+ * 这是 agent 更正一句结论、一个参数或一小段表格时的受控入口，避免为了小改动
+ * 直接 edit 整个任务文件。oldText 必须在目标章节自身正文（不含子节）中恰好出现一次；
+ * patch 不允许改变编号章节大纲，改标题/重组章节仍应走 replace。
+ */
+export function patchRecordSection(body: string, section: string, oldText: string, newText: string): SectionPatchResult {
+  const num = parseSecNum(section)
+  if (!num) return { ok: false, error: "invalid_section" }
+  const needle = oldText.replace(/\r\n/g, "\n")
+  if (!needle) return { ok: false, error: "empty_match" }
+
+  // patch 不承担 normalize：目标范围之外的正文必须保持原样。
+  const normalizedBody = body.replace(/\r\n/g, "\n")
+  const lines = normalizedBody.split("\n")
+  const zone = chapterZone(lines)
+  const heads = scanChapterHeads(lines, zone)
+  const idx = heads.findIndex((h) => cmpSecNum(h.num, num) === 0)
+  if (idx < 0) return { ok: false, error: "section_not_found" }
+
+  const current = heads[idx]
+  // 只允许改该节自己的导语正文；遇到第一个编号子节/兄弟节就停止。
+  // 想改子节必须显式传它的编号，避免父章 patch 误伤深层内容。
+  const end = idx + 1 < heads.length ? heads[idx + 1].line : zone.end
+  const start = current.line + 1 // 标题本身由 section/title 管，不允许 patch 偷改
+  const source = lines.slice(start, end).join("\n")
+  const matches = source.split(needle).length - 1
+  if (matches === 0) return { ok: false, error: "match_not_found" }
+  if (matches > 1) return { ok: false, error: "ambiguous_match" }
+
+  const replacement = newText.replace(/\r\n/g, "\n")
+  const patched = source.replace(needle, replacement)
+  // 必须在拼回原文上下文后校验；只看 replacement 会漏掉 `##` + ` 标题`
+  // 这类跨替换边界生成的结构。围栏内的 Markdown 字面量仍允许修改。
+  if (markdownStructureSignature(patched) !== markdownStructureSignature(source)) return { ok: false, error: "outline_changed" }
+  const next = [...lines.slice(0, start), ...patched.split("\n"), ...lines.slice(end)].join("\n")
+  const outline = (s: string) => listRecordSections(s).map((x) => `${x.num}\t${x.title}`).join("\n")
+  if (outline(next) !== outline(normalizedBody)) return { ok: false, error: "outline_changed" }
+  return { ok: true, body: next }
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
-// Kanban board — read columns/cards; move a card between columns via line edits
-// (NEVER reserialize a board's YAML — it holds the plugin's settings block).
+// Kanban board — read columns/cards and insert a new task card without ever
+// reserializing the board's YAML settings block.
 // ═════════════════════════════════════════════════════════════════════════════
 
 const BOARD_MARK = "kanban-plugin: board"
@@ -590,49 +665,6 @@ export function parseBoard(raw: string): BoardColumn[] {
     }
   }
   return cols
-}
-
-/** Move a card (matched by task basename) to `toColumn`, setting checkbox. */
-export function moveCard(raw: string, taskBase: string, toColumn: string, checked: boolean): string | null {
-  const lines = raw.split(/\r?\n/)
-  const norm = (s: string) => s.toLowerCase()
-  // find the card line
-  let cardIdx = -1
-  for (let i = 0; i < lines.length; i++) {
-    if (/^%%/.test(lines[i])) break
-    const link = /^\s*[-*]\s*\[[ xX]\]/.test(lines[i]) ? cardLink(lines[i]) : null
-    if (link && norm(link) === norm(taskBase)) {
-      cardIdx = i
-      break
-    }
-  }
-  if (cardIdx < 0) return null
-  // find the target column heading
-  let headIdx = -1
-  for (let i = 0; i < lines.length; i++) {
-    if (/^%%/.test(lines[i])) break
-    const h = /^##\s+(.*)$/.exec(lines[i])
-    if (h && norm(h[1].trim()) === norm(toColumn)) {
-      headIdx = i
-      break
-    }
-  }
-  if (headIdx < 0) return null
-  // rewrite the card line's checkbox
-  let card = lines[cardIdx].replace(/(\[)[ xX](\])/, `$1${checked ? "x" : " "}$2`)
-  // remove from old position
-  const without = [...lines.slice(0, cardIdx), ...lines.slice(cardIdx + 1)]
-  // recompute target column end (heading may have shifted if card was above it)
-  const newHead = cardIdx < headIdx ? headIdx - 1 : headIdx
-  let end = without.length
-  for (let i = newHead + 1; i < without.length; i++) {
-    if (/^##\s+/.test(without[i]) || /^%%/.test(without[i])) {
-      end = i
-      break
-    }
-  }
-  while (end > newHead + 1 && without[end - 1].trim() === "") end--
-  return [...without.slice(0, end), card, ...without.slice(end)].join("\n")
 }
 
 /** Add a `- [ ] [[base]]<suffix>` card under a column (default first) of a board. */
@@ -786,16 +818,33 @@ let pollStop = false
 /** Obsidian 插件启动时上报的当前 vault 根目录（手动配置留空时的默认值）。 */
 let reportedVaultDir = ""
 
-function cfg(ctx: HostContext) {
-  const c = ctx.config()
-  // 扫描根：手动配置支持 ; 分隔多根；Obsidian 插件上报的当前 vault 始终并入
-  // （换 vault 测试零配置）。第一根作为 task_create 相对路径的基准。
-  const manual = String(c.vaultDir ?? "")
+/** 显式配置是权威来源；只有显式配置为空时才回退到 Obsidian 当前 vault。
+ *
+ * 不能把两者无条件合并：同一共享目录可能同时以映射盘 Z:\ 和 UNC
+ * \\server\share 出现，字符串去重无法识别它们是同一目录，最终会重复扫描和展示。
+ */
+export function resolveVaultDirs(manualRaw: string, reported: string): string[] {
+  const manual = manualRaw
     .split(";")
     .map((s) => s.trim())
     .filter(Boolean)
-  const roots = [...manual]
-  if (reportedVaultDir && !roots.some((r) => norm(r) === norm(reportedVaultDir))) roots.push(reportedVaultDir)
+  const seen = new Set<string>()
+  const unique = manual.filter((p) => {
+    const key = norm(p)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+  if (unique.length) return unique
+  const fallback = reported.trim()
+  return fallback ? [fallback] : []
+}
+
+function cfg(ctx: HostContext) {
+  const c = ctx.config()
+  // 扫描根：手动配置支持 ; 分隔多根并优先；留空时才跟随 Obsidian 当前 vault。
+  // 第一根作为 task_create 相对路径的基准。
+  const roots = resolveVaultDirs(String(c.vaultDir ?? ""), reportedVaultDir)
   return {
     vaultDirs: roots,
     vaultDir: roots[0] ?? "",
@@ -1012,44 +1061,83 @@ function taskTemplate(input: { title: string; project: string; type: string; tod
   return serializeFrontmatter(fm, body)
 }
 
+/** 按任务类型给 agent 一份最小证据清单；不是固定模板，避免为了填表而制造废话。 */
+function recordingRubric(type: string): string[] {
+  const t = type.toLowerCase()
+  if (/bug|缺陷|故障|修复/.test(t)) {
+    return [
+      "本任务是 bug/故障修复，正文优先保留：现象与影响、环境/版本、最小复现、决定性根因证据、",
+      "修复方案及取舍、原场景复测 + 回归/边界测试、残余风险。失败假设只有能防止以后重复踩坑时才浓缩记录。",
+    ]
+  }
+  if (/产测|工装|治具|测试工具|烧录/.test(t)) {
+    return [
+      "本任务是产测/工装工具，正文优先保留：工位与 DUT 范围、仪器/夹具/固件/工具版本、输入输出与协议、",
+      "pass/fail 阈值（单位/公差/超时/重试）、异常恢复与安全互锁、追溯数据、良品/坏品/边界/重复性验证、发布与回滚。",
+    ]
+  }
+  if (/适配|功能|移植|兼容/.test(t)) {
+    return [
+      "本任务是功能/平台适配，正文优先保留：目标与验收边界、支持/不支持的平台版本矩阵、约束与兼容决策、",
+      "接口/依赖/配置变化、实现要点、验证矩阵、发布/升级/回滚方式和已知限制。",
+    ]
+  }
+  return [
+    "本任务正文优先保留：目标与验收边界、约束和最终决策、关键实现变化、可复查的验证证据、",
+    "风险/限制/未决项和下一步。按实际任务取舍，不要为了凑结构写空话。",
+  ]
+}
+
 function launchContract(meta: TaskMeta, sessionId: string, docText: string, rules: PathRule[]): string {
   const recs = listRecordSections(docText.split(/\r?\n/).slice(1).join("\n"))
   const nextNum = recs.length ? String(Math.max(...recs.map((r) => Number(r.num.split(".")[0]))) + 1) : "1"
   return [
     `【taskflow】你在处理任务「${meta.title}」（id: ${meta.id}，项目 ${meta.project}）。你本次的 session id 是 ${sessionId}。`,
-    `任务文档路径：Windows「${meta.path}」；你的运行环境内「${vmPathNote(rules, meta.path)}」。`,
+    `任务文档路径（只读定位）：Windows「${meta.path}」；你的运行环境内「${vmPathNote(rules, meta.path)}」。`,
     "",
-    "文档布局：frontmatter（tag/pha/sessions）→「待办」（任务 todo list）→ `---` 分隔线 →",
-    "**正文区**（编号章节 1 / 1.1 / 1.1.1，任务的方案/实施/验证/问题等实质内容）→ 置底「日志」表。",
+    "## 写入协议（必须遵守）",
+    "任务文档和 Kanban 看板是 Taskflow 受管资产。路径只用于定位；禁止使用 edit/write/apply_patch、shell、脚本、",
+    "重定向或编辑器直接写任务 md/看板。所有变更必须调用工具列表中名称以 `task_…` 结尾的 win-host MCP 工具",
+    "（通常显示为 `winhost_task_…`）。工具不可见或调用失败时，报告 `TASKFLOW_TOOL_UNAVAILABLE`，不得降级为直接编辑。",
+    "代码仓库里的源文件不受此限制。下方任务文档只是只读快照。",
     "",
-    "可用工具（win-host MCP）——只能通过它们写文档，保证格式统一：",
-    `- task_write_section(id="${meta.id}", section, title, content, mode?, complete_todo?)：`,
+    "文档布局：frontmatter（project/type/sessions/pha_issue/created）→「待办」→ `---` →",
+    "**正文区**（编号章节最多四级：1 / 1.1 / 1.1.1 / 1.1.1.1）→ 置底「日志」表。",
+    "",
+    "可用工具（按名称后缀识别，例如 task_write_section 通常显示为 winhost_task_write_section）：",
+    `- task_write_section(id="${meta.id}", section, title?, content, mode?, old_text?, complete_todo?)：`,
     "  【正文唯一入口】写一个完整的顶级章节（section 用 1 / 2 / 3…）。一次把该阶段的所有小节",
     "  都写进 content，一步成型——别一个小节一个小节地分开调用。content 里小节直接用 markdown",
     "  标题标记，从几级开始都行（#/##/### 都可以，工具按相对深度排），工具自动编号成 ### N.1、",
-    "  #### N.1.1（再深降为粗体），小节名和内容随你定。**不用自己写 `---` 分隔线**（章间分隔工具管）。",
+    "  #### N.1.1、##### N.1.1.1（再深降为粗体）。**不用自己写 `---` 分隔线**（章间分隔工具管）。",
     "  结构化写：小节标题+列表+表格+代码块，别把一段塞成单行长文本。",
-    "  mode=replace（默认）整章重写 / append 章末追加续号；改已有章节别新开重复号。",
+    "  mode=replace（默认）重写目标章 / append 章末追加续号；小范围更正必须先 task_get 目标节，再用",
+    "  mode=patch + old_text 做章节自身正文内的唯一精确替换。patch 不得改标题/大纲。修改已有节前先读该节；新建节先读全文确认编号。",
     `  当前已有章节：${recs.length ? recs.map((r) => r.num).join(", ") : "（无）"}；新阶段从 ${nextNum} 开始。`,
-    `- task_todo(id="${meta.id}", action, text)：勾选/新增待办（action: check/uncheck/add）`,
-    `- task_issue(id="${meta.id}", problem, cause?, solution)：问题+解决一次性记录（自动生成「问题」章节）`,
-    `- task_log(id="${meta.id}", text, session="${sessionId}")：底部日志表追加一行——只在阶段完成时记，不要流水账`,
-    `- task_set_status(id="${meta.id}", column)：移动看板卡片（列见看板）`,
+    `- task_todo(id="${meta.id}", action, text)：只管理可执行下一步、阻塞和「待确认：…」（action: check/uncheck/add）`,
+    `- task_issue(id="${meta.id}", problem, cause?, solution, verification)：仅在问题已定位、已解决并验证后生成「问题」章节`,
+    `- task_log(id="${meta.id}", text, session="${sessionId}")：正文索引，只在阶段完成时记一句，不重复正文`,
     `- task_set_field(id="${meta.id}", key, value)：更新 type/pha_issue 字段`,
-    `- task_get(id="${meta.id}", section?)：读文档全文，或只读某编号章节（改章节前先读它省 token）；task_list()：看板全览`,
-    "（若这些工具不在你的工具列表里，就按上面的布局直接编辑任务文档，路径用「你的运行环境内」那个形态。）",
+    `- task_get(id="${meta.id}", section?)：读全文/目标章节；修改已有节前读该节，新建节前读全文；task_list()：看板全览`,
+    `- task_normalize(id="${meta.id}")：只在旧文档缺少 v5 布局时补齐结构`,
+    "看板状态由用户在 Obsidian 中拖卡决定；不要直接编辑看板文件。",
     "",
-    "写文档的硬规则（这份文档是给人复查的，不是过程日志）：",
-    "1. 只做「待办」里列出的事。",
-    "2. 每完成一个阶段 → task_write_section 写一个完整章节（导语+全部小节一次写全）",
-    "   + complete_todo 勾掉对应待办 + task_log 记一行。章节 = 结论先行、关键数据用表格、",
-    "   命令/清单用代码块、决策写理由、小节分层——别堆成一大段或单行长文本。",
-    "3. **禁止**写入：探索过程的碎碎念、无结论的中间状态、与任务无关的边角信息、",
-    "   大段原始输出（截取关键行即可）。写之前自问：这段被删掉会有人惋惜吗？不会就别写。",
-    "4. 修改已有章节：同号 replace 整章重写；补充增量用 mode=append，别新开重复章节。",
-    "5. 不要主动碰 PHA（同步由用户手动触发）。",
+    "## 记录标准：文档是可复用结论，不是会话转录",
+    "只在稳定里程碑落正文：需求/边界确认、方案定稿、实现切片完成且有验证、根因由证据确认且修复验证、",
+    "或重要问答形成最终结论。每个顶级章节应自洽，至少覆盖：结论；范围与关键变更/取舍；验证环境、方法与结果；遗留风险/限制。",
+    "应保留版本、环境、关键指标、测试计数和 artifact/log 路径等可复查证据；大段日志只摘决定性行。",
+    ...recordingRubric(meta.type),
     "",
-    "## 当前任务文档",
+    "问答不要复制聊天：未回答且阻塞的问题用 task_todo 新增「待确认：…」并询问用户；回答若改变需求、验收、",
+    "设计、兼容或操作，就浓缩为「问题 / 最终结论 / 依据 / 影响」写进相关章节并勾掉待确认项。一次性权限、路径、",
+    "是否继续等过程问题不记录；答案变化时保留最新批准结论，只有审计必要才简述替代原因。",
+    "",
+    "禁止写入：思维链和探索碎碎念、逐条命令、无结论中间状态、完整终端输出/完整 diff/整段聊天、",
+    "未经证实的猜测、与任务无关的信息、密钥和不必要的敏感数据。失败尝试只有能排除高概率路径、避免未来重踩时才浓缩记录。",
+    "新发现的必要工作不要静默扩范围：先询问用户，或用 task_todo 增加明确可验证的待办。",
+    "每完成一个阶段：task_write_section 一次写全 + complete_todo 勾待办 + task_log 写一句索引。不要主动同步 PHA。",
+    "",
+    "## 当前任务文档（只读快照，禁止直接编辑）",
     "```markdown",
     docText,
     "```",
@@ -1060,6 +1148,9 @@ function launchContract(meta: TaskMeta, sessionId: string, docText: string, rule
 function phaSyncPrompt(meta: TaskMeta, docText: string): string {
   return [
     `【taskflow · 同步 PHA】把任务「${meta.title}」的进度同步到内网 PHA。`,
+    "",
+    "任务文档是 Taskflow 受管资产，禁止通过 edit/shell/脚本直接修改；需要回填链接时调用工具列表中名称以",
+    "`task_set_field` 结尾的 win-host MCP 工具（通常显示为 `winhost_task_set_field`）。工具不可用就报告错误，不得直接编辑。",
     "",
     "步骤：",
     `1. 若 frontmatter 的 pha_issue 为空 → 用你的 PHA 工具新建条目，然后 task_set_field(id="${meta.id}", key="pha_issue", value=<链接>) 回填。`,
@@ -1130,16 +1221,21 @@ function associate(ctx: HostContext, idOrPath: string, sessionId: string, add: b
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Agent tools (win-host MCP) — format-enforcing; this is where standardization
-// actually comes from (the agent CANNOT free-form the doc).
+// Agent tools (win-host MCP) — format-enforcing; this is where Taskflow applies
+// its strongest in-protocol standardization. Filesystem policy is still the
+// caller/runtime's responsibility, so every mutating tool also states the rule.
 // ═════════════════════════════════════════════════════════════════════════════
+
+const MANAGED_WRITE_RULE =
+  "任务文档和看板是 Taskflow 受管资产：禁止用 edit/write/apply_patch、shell、脚本或重定向直接修改；所有变更必须调用 task_* 工具，工具不可用或失败时报告错误，不得绕过。"
 
 const tools: McpToolDef[] = [
   {
     name: "task_list",
     description:
       "看板全览：列出所有看板（路径、列名）和每列下已有的任务（id/标题/类型/待办完成度/文档路径）。" +
-      "创建新任务或查找既有任务前先调用它——确认任务是否已存在、应放哪个看板哪一列。",
+      "创建新任务或查找既有任务前先调用它——确认任务是否已存在、应放哪个看板哪一列。" +
+      MANAGED_WRITE_RULE,
     inputSchema: { type: "object", properties: {} },
     async handler(_args, ctx) {
       const conf = cfg(ctx)
@@ -1171,12 +1267,14 @@ const tools: McpToolDef[] = [
     name: "task_get",
     description:
       "读取一个 taskflow 任务文档（id = 文档文件名，如「低温启动bug」）。" +
-      "不带 section = 读全文；带 section（如 1 / 1.2）= 只读该编号章节（含其子节），改章节前先读它省 token。",
+      "不带 section = 读全文；带 section（如 1 / 1.2 / 1.2.3.4）= 只读该编号章节（含其子节）。" +
+      "修改已有章节前必须先读取目标章节；新建章节前先读全文确认编号，避免覆盖旧结论和证据。" +
+      MANAGED_WRITE_RULE,
     inputSchema: {
       type: "object",
       properties: {
         id: { type: "string" },
-        section: { type: "string", description: "可选：只读这个编号章节（如 1、1.2），含其编号子节" },
+        section: { type: "string", description: "可选：只读这个编号章节（如 1、1.2、1.2.3.4），含其编号子节" },
       },
       required: ["id"],
     },
@@ -1202,7 +1300,9 @@ const tools: McpToolDef[] = [
       "按统一模板新建任务文档，并在指定看板列插入卡片。" +
       "调用前必须做两件事：① task_list 查看已有任务与看板列，避免重复创建；" +
       "② dir（文档存放目录）和 column（看板列）如果用户没有明说，先在对话里询问用户确认，不要擅自决定。" +
-      "创建后若任务还没有 PHA：在有 PHA 工具的会话里建一个 PHA 条目并用 task_set_field 回填 pha_issue，或提醒用户稍后处理。",
+      "初始 todos 应是可验证的交付/验收项，不要填探索步骤或泛泛的『完成开发』。" +
+      "创建后若任务还没有 PHA：在有 PHA 工具的会话里建一个 PHA 条目并用 task_set_field 回填 pha_issue，或提醒用户稍后处理。" +
+      MANAGED_WRITE_RULE,
     inputSchema: {
       type: "object",
       properties: {
@@ -1283,7 +1383,10 @@ const tools: McpToolDef[] = [
   },
   {
     name: "task_todo",
-    description: "勾选/取消/新增任务待办。action: check(完成) | uncheck(取消) | add(新增)。text 是待办文本（check 时做包含匹配）。",
+    description:
+      "勾选/取消/新增任务待办。action: check(完成) | uncheck(取消) | add(新增)。text 是待办文本（check 时做包含匹配）。" +
+      "待办只放可执行下一步、阻塞或『待确认：…』问题；知识结论应写正文，未解决问题不得伪装成已完成结论。" +
+      MANAGED_WRITE_RULE,
     inputSchema: {
       type: "object",
       properties: {
@@ -1307,31 +1410,35 @@ const tools: McpToolDef[] = [
   {
     name: "task_write_section",
     description:
-      "【记录任务正文的唯一方式】向任务正文区（--- 分隔线之后）写一个完整的顶级章节。" +
+      "【记录任务正文的唯一方式】向任务正文区（--- 分隔线之后）写章节，或在指定章节自身正文内做受控的局部更正。" +
       "section 用顶级章节号（1 / 2 / 3…）；一次把这个阶段的全部小节都写进 content，一步成型——" +
       "不要一个小节一个小节地分开调用（那样割裂又啰嗦）。" +
       "content 是 Markdown：小节直接用标题标记，从几级标题开始都行（#、##、### 都可以，工具按相对深度排）——" +
-      "工具自动编号成本章的编号小节（### N.1、#### N.1.1，再深降为粗体），小节名和内容随你定；数据用表格、命令用代码块。" +
+      "工具自动编号成本章的编号小节（### N.1、#### N.1.1、##### N.1.1.1，最多四级），小节名和内容随你定；数据用表格、命令用代码块。" +
       "不用自己写 `---` 分隔线（章节之间的分隔线由工具统一维护，写进去会被去掉）。" +
       "结构化写：小节标题+列表+表格+代码块，别把一大段塞成单行长文本。" +
       "mode=replace（默认）：content 含标题=整章连子节一起重写；不含标题=只重写本章导语（已有子节保留）。" +
       "mode=append：在本章末尾追加增量，content 里的小节自动接着已有编号续号（改已有章节别新开重复章节）。" +
-      "只写有效信息：结论先行、关键数据、决策理由；过程性碎碎念留在会话里，不要进文档。" +
-      "传 complete_todo（待办文本包含匹配）可同时勾掉待办。",
+      "mode=patch：必须先 task_get 目标节；old_text 必须在该节自身正文（不含子节）恰好出现一次，content 是替换文本。" +
+      "patch 不接受 title，也不允许新增标题/水平线或改变大纲；0 次或多次匹配均拒绝且不写文件。" +
+      "只在稳定里程碑写正文：结论先行，并保留范围/取舍、验证环境与结果、风险/限制。讨论问答应提炼成最终结论/依据/影响，" +
+      "不得粘贴聊天、思维链、试错流水、大段原始输出或完整 diff。传 complete_todo（待办文本包含匹配）可同时勾掉待办。" +
+      MANAGED_WRITE_RULE,
     inputSchema: {
       type: "object",
       properties: {
         id: { type: "string" },
         section: {
           type: "string",
-          description: "章节号：优先用顶级号 1 / 2 / 3（整章一次写全，小节放 content 里）；1.2 / 1.2.3 仅用于事后单独补改某个小节",
+          description: "章节号：最多四级。优先用顶级号 1 / 2 / 3（整阶段一次写全，小节放 content 里）；1.2 / 1.2.3 / 1.2.3.4 用于精确补改已有小节",
         },
-        title: { type: "string", description: "章节标题（append 模式下留空=保持原标题）" },
+        title: { type: "string", description: "章节标题（新建/replace 应提供；append 留空=保持原标题；patch 必须留空）" },
         content: {
           type: "string",
-          description: "章节正文（Markdown）。小节用标题标记（层级随意，工具会编号）；用列表/表格/代码块结构化，勿写单行长文本；不用加 --- 分隔线",
+          description: "replace/append 时为章节 Markdown；patch 时为 old_text 的替换文本。小节标题由工具编号；用列表/表格/代码块结构化；不用加 --- 分隔线",
         },
-        mode: { type: "string", enum: ["replace", "append"], description: "replace=整章重写(默认)；append=章节末尾追加" },
+        mode: { type: "string", enum: ["replace", "append", "patch"], description: "replace=重写(默认)；append=章末追加；patch=章节自身正文内唯一精确替换" },
+        old_text: { type: "string", description: "mode=patch 必填：task_get 后从目标节自身正文复制的精确旧文本，必须恰好匹配一次" },
         complete_todo: { type: "string", description: "可选：同时勾掉的待办（文本包含匹配）" },
       },
       required: ["id", "section", "content"],
@@ -1347,10 +1454,31 @@ const tools: McpToolDef[] = [
           isError: true,
         }
       }
-      const mode = args.mode === "append" ? "append" : "replace"
-      const next = writeRecordSection(t.body, String(args.section ?? ""), String(args.title ?? ""), content, mode)
-      if (!next) return { text: `非法章节号：${args.section}（应为 1 / 1.2 / 1.2.3，最多三级）`, isError: true }
-      let body = next
+      const mode = args.mode === "append" ? "append" : args.mode === "patch" ? "patch" : "replace"
+      const section = String(args.section ?? "")
+      let body: string
+      if (mode === "patch") {
+        if (String(args.title ?? "").trim()) return { text: "mode=patch 不接受 title；改标题请对精确 section 使用 mode=replace", isError: true }
+        const oldText = String(args.old_text ?? "")
+        if (oldText.length > LIMIT) return { text: `old_text 过长（${oldText.length} 字符 > ${LIMIT}）`, isError: true }
+        const patched = patchRecordSection(t.body, section, oldText, content)
+        if (!patched.ok) {
+          const messages: Record<SectionPatchError, string> = {
+            invalid_section: `非法章节号：${section}（应为 1 / 1.2 / 1.2.3 / 1.2.3.4，最多四级）`,
+            section_not_found: `章节不存在：${section}；请先 task_get 确认章节号`,
+            empty_match: "mode=patch 必须提供非空 old_text",
+            match_not_found: "old_text 在目标章节自身正文中未找到；文档可能已变化，请重新 task_get 后再试",
+            ambiguous_match: "old_text 在目标章节自身正文中出现多次；请增加上下文，使其唯一后再试",
+            outline_changed: "patch 只能改普通正文，不能新增/修改标题、水平线或未闭合代码块；结构变更请用 mode=replace",
+          }
+          return { text: messages[patched.error], isError: true }
+        }
+        body = patched.body
+      } else {
+        const next = writeRecordSection(t.body, section, String(args.title ?? ""), content, mode)
+        if (!next) return { text: `非法章节号：${section}（应为 1 / 1.2 / 1.2.3 / 1.2.3.4，最多四级）`, isError: true }
+        body = next
+      }
       let todoNote = ""
       const todo = String(args.complete_todo ?? "").trim()
       if (todo) {
@@ -1374,13 +1502,16 @@ const tools: McpToolDef[] = [
       const structNote = longLine
         ? `；提示：有 ${longLine} 字符的超长单行，建议拆成小节标题/列表/表格，别堆成一行`
         : ""
-      return { text: `ok: 章节 ${args.section} 已${mode === "append" ? "追加" : "写入"}${todoNote}${structNote}` }
+      const action = mode === "append" ? "追加" : mode === "patch" ? "局部修改" : "写入"
+      return { text: `ok: 章节 ${args.section} 已${action}${todoNote}${structNote}` }
     },
   },
   {
     name: "task_log",
     description:
-      "向文档底部的「日志」表追加一行阶段性记录（时间|会话|记录）。只在阶段完成/状态变化时记一条，不要流水账。",
+      "向文档底部的「日志」表追加一行阶段性索引（时间|会话|记录）。只在阶段完成或关键结论变化时记一条，不要流水账，" +
+      "也不要复制正文。推荐一句话格式：完成 X；验证 Y；结论/遗留 Z。" +
+      MANAGED_WRITE_RULE,
     inputSchema: {
       type: "object",
       properties: { id: { type: "string" }, text: { type: "string" }, session: { type: "string" } },
@@ -1398,7 +1529,7 @@ const tools: McpToolDef[] = [
   },
   {
     name: "task_set_field",
-    description: "更新任务 frontmatter 字段。仅允许 type / pha_issue（PHA 链接回填用这个）。",
+    description: "更新任务 frontmatter 字段。仅允许 type / pha_issue（PHA 链接回填用这个）。" + MANAGED_WRITE_RULE,
     inputSchema: {
       type: "object",
       properties: {
@@ -1423,16 +1554,19 @@ const tools: McpToolDef[] = [
     name: "task_issue",
     description:
       "记录一个问题及其解决（task_write_section 的语法糖）：自动取下一个顶级章节号，" +
-      "生成固定结构的「问题」章节（现象/根因/解决）。适合遇到并解决问题后一次性记录。",
+      "生成固定结构的「问题」章节（现象/根因/解决/验证）。仅用于已定位、已解决且已验证的问题；" +
+      "未解决或仍是猜测时，应 task_todo(add, '待确认：…')，不得写成既成结论。" +
+      MANAGED_WRITE_RULE,
     inputSchema: {
       type: "object",
       properties: {
         id: { type: "string" },
         problem: { type: "string", description: "问题现象（一两句）" },
-        cause: { type: "string", description: "可选：根因" },
-        solution: { type: "string", description: "解决办法/结论" },
+        cause: { type: "string", description: "可选：已由证据确认的根因" },
+        solution: { type: "string", description: "解决办法、选择理由及影响" },
+        verification: { type: "string", description: "必填：验证环境、方法与结果；不要只写『已测试』" },
       },
-      required: ["id", "problem", "solution"],
+      required: ["id", "problem", "solution", "verification"],
     },
     async handler(args, ctx) {
       const t = resolveTask(ctx, String(args.id ?? ""))
@@ -1443,11 +1577,18 @@ const tools: McpToolDef[] = [
       const nextNum = String((tops.length ? Math.max(...tops) : 0) + 1)
       const problem = String(args.problem ?? "").trim()
       const cause = String(args.cause ?? "").trim()
+      const solution = String(args.solution ?? "").trim()
+      const verification = String(args.verification ?? "").trim()
+      if (!problem || !solution || !verification) {
+        return { text: "problem / solution / verification 均不能为空；未解决问题请先加入『待确认』待办", isError: true }
+      }
       const content = [
         `**现象**：${problem}`,
         ...(cause ? ["", `**根因**：${cause}`] : []),
         "",
-        `**解决**：${String(args.solution ?? "").trim()}`,
+        `**解决**：${solution}`,
+        "",
+        `**验证**：${verification}`,
       ].join("\n")
       const title = `问题：${problem.slice(0, 24)}${problem.length > 24 ? "…" : ""}`
       const next = writeRecordSection(t.body, nextNum, title, content)
@@ -1458,33 +1599,10 @@ const tools: McpToolDef[] = [
     },
   },
   {
-    name: "task_set_status",
-    description: "移动任务在看板上的卡片到指定列（= 改状态）。column 必须是该看板已有的列名。",
-    inputSchema: { type: "object", properties: { id: { type: "string" }, column: { type: "string" } }, required: ["id", "column"] },
-    async handler(args, ctx) {
-      const t = resolveTask(ctx, String(args.id ?? ""))
-      if (!t) return { text: `task not found: ${args.id}`, isError: true }
-      const conf = cfg(ctx)
-      const column = String(args.column ?? "").trim()
-      let boardRaw = ""
-      try {
-        boardRaw = readFileSync(t.meta.board, "utf8")
-      } catch {
-        return { text: "board unreadable", isError: true }
-      }
-      const checked = conf.doneColumns.includes(column.toLowerCase())
-      const next = moveCard(boardRaw, t.meta.id, column, checked)
-      if (!next) return { text: `移动失败：看板里没有卡片或列「${column}」`, isError: true }
-      writeFileSync(t.meta.board, next, "utf8")
-      refreshRegistry(ctx)
-      ctx.emit("taskflow:changed", { id: t.meta.id, status: column })
-      return { text: `ok: ${t.meta.id} → ${column}` }
-    },
-  },
-  {
     name: "task_normalize",
     description:
-      "非破坏性规范化一篇任务文档到 v5 布局：补齐缺失的 frontmatter 字段、待办小节、--- 分隔线、顶级章之间的分隔线、置底日志表。不改动任何已有内容。",
+      "非破坏性规范化一篇任务文档到 v5 布局：补齐缺失的 frontmatter 字段、待办小节、--- 分隔线、顶级章之间的分隔线、置底日志表。不改动任何已有内容。" +
+      MANAGED_WRITE_RULE,
     inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
     async handler(args, ctx) {
       const t = resolveTask(ctx, String(args.id ?? ""))
@@ -1546,10 +1664,12 @@ const routes: RouteDef[] = [
     async handler(req, ctx) {
       const path = String(req.body?.path ?? "").trim()
       if (path && existsSync(path)) {
-        const changed = reportedVaultDir !== path
+        const before = cfg(ctx).vaultDirs.map(norm).join("|")
+        const reportedChanged = norm(reportedVaultDir) !== norm(path)
         reportedVaultDir = path
-        if (changed) {
-          ctx.log(`vault reported by obsidian: ${path}`)
+        const effectiveChanged = before !== cfg(ctx).vaultDirs.map(norm).join("|")
+        if (reportedChanged) ctx.log(`vault reported by obsidian: ${path}`)
+        if (effectiveChanged) {
           refreshRegistry(ctx)
           ctx.emit("taskflow:changed", {})
         }
@@ -1613,7 +1733,7 @@ export const taskflowCapability: Capability = {
         label: "扫描根目录",
         type: "string",
         placeholder: "留空=自动用当前 Obsidian vault；多根用 ; 分隔；支持 UNC 如 \\\\192.168.56.100\\share",
-        help: "taskflow 在这些目录下递归查找 Obsidian Kanban 看板（含 kanban-plugin: board 的文件）；看板上 [[链接]] 到的文档即任务。多根用 ; 分隔；Obsidian 插件上报的当前 vault 始终自动并入（换 vault 无需改配置）。",
+        help: "taskflow 在这些目录下递归查找 Obsidian Kanban 看板（含 kanban-plugin: board 的文件）；看板上 [[链接]] 到的文档即任务。手动配置是权威来源，多根用 ; 分隔；只有留空时才跟随 Obsidian 当前 vault，避免映射盘与 UNC 对同一目录重复扫描。",
       },
       {
         key: "doneColumns",
@@ -1629,7 +1749,7 @@ export const taskflowCapability: Capability = {
         placeholder: "如 C:\\Users\\me\\Documents\\Obsidian Vault=/media/sf_vault",
         help:
           "Windows 路径 → opencode 运行环境（VirtualBox 共享目录/WSL 等）的前缀映射，多条用 ; 分隔，最长前缀优先。" +
-          "配置后 task_* 工具会给出 agent 可直接读写的路径，session 工作目录也用映射后的形态。",
+          "配置后 task_* 工具会给出 agent 可定位的对端路径，session 工作目录也用映射后的形态；任务文档仍必须通过 task_* 工具更新。",
       },
       { key: "pollSeconds", label: "刷新间隔(秒)", type: "number", default: 15, help: "刷新看板/任务缓存的间隔（供看板脚注与面板）。0=不主动刷新。" },
       { key: "sessionModel", label: "会话模型(可选)", type: "string", placeholder: "provider/model，留空用默认" },

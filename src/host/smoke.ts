@@ -90,7 +90,7 @@ async function main(): Promise<void> {
   // health + capabilities advertisement ───────────────────────────────────────
   ok((await getJson(`${b}/health`))?.ok === true, "GET /health")
   const caps = (await getJson(`${b}/capabilities`))?.capabilities ?? []
-  ok(caps.length === 5, `GET /capabilities -> ${caps.length} caps`)
+  ok(caps.length === 6, `GET /capabilities -> ${caps.length} caps`)
   ok(caps.find((c: any) => c.id === "chat")?.hasPanel === true, "  chat advertises a panel")
   ok(caps.find((c: any) => c.id === "mailflow")?.hasPanel === true, "  mailflow advertises a panel")
   const mailflowCap = caps.find((c: any) => c.id === "mailflow")
@@ -141,6 +141,7 @@ async function main(): Promise<void> {
   const list = await post(`${b}/mcp`, { jsonrpc: "2.0", id: 2, method: "tools/list" })
   const toolNames = (list?.result?.tools ?? []).map((t: any) => t.name)
   ok(toolNames.includes("outlook_search") && toolNames.includes("notify_desktop"), `MCP tools/list -> ${JSON.stringify(toolNames)}`)
+  ok(toolNames.includes("task_write_section") && !toolNames.includes("task_set_status"), "  taskflow exposes managed document tools without task_set_status")
   const call = await post(`${b}/mcp`, { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "outlook_search", arguments: { top: 2 } } })
   ok(typeof call?.result?.content?.[0]?.text === "string", "MCP tools/call outlook_search")
 
@@ -201,7 +202,7 @@ async function main(): Promise<void> {
 
   const caps2 = (await getJson(`${b}/capabilities`))?.capabilities ?? []
   const demo = caps2.find((c: any) => c.id === "demo")
-  ok(caps2.length === 6 && demo?.external === true, `GET /capabilities -> ${caps2.length} (external 'demo' present)`)
+  ok(caps2.length === 7 && demo?.external === true, `GET /capabilities -> ${caps2.length} (external 'demo' present)`)
   ok(demo?.panel?.url === `${pluginBase}/` && demo?.hasPanel === true, "  demo advertises an iframe panel")
 
   const list3 = await post(`${b}/mcp`, { jsonrpc: "2.0", id: 5, method: "tools/list" })
@@ -246,7 +247,7 @@ async function main(): Promise<void> {
   ok(unreg?.ok === true, "  unregister removes it")
   const caps3 = (await getJson(`${b}/capabilities`))?.capabilities ?? []
   const list4 = await post(`${b}/mcp`, { jsonrpc: "2.0", id: 7, method: "tools/list" })
-  ok(caps3.length === 5 && !(list4?.result?.tools ?? []).some((t: any) => t.name === "echo_tool"), "  after unregister: gone from caps + tools")
+  ok(caps3.length === 6 && !(list4?.result?.tools ?? []).some((t: any) => t.name === "echo_tool"), "  after unregister: gone from caps + tools")
   plugin.close()
 
   server.close()

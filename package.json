@@ -7,6 +7,7 @@
   "main": "out/host/index.js",
   "scripts": {
     "smoke": "tsx src/host/smoke.ts",
+    "test:taskflow": "tsx --test src/host/capabilities/taskflow.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.host.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.obsidian.json",
     "build:host": "node scripts/build-host.mjs",
     "build:renderers": "node scripts/build-renderers.mjs",
